@@ -17,13 +17,13 @@ OUT=$(mktemp -d /tmp/pynference-regress-XXXX)
 trap 'rm -rf "$OUT"' EXIT
 
 echo "== regress $1: ours --ref (graph) $(date +%T)"
-torchrun --nproc_per_node=2 bench/compare_probs.py ours --ref "$G/ref_probs.json" -m "$MODEL" \
+timeout 900 torchrun --nproc_per_node=2 bench/compare_probs.py ours --ref "$G/ref_probs.json" -m "$MODEL" \
     --decode graph -o "$OUT/ours_now.json" 2>&1 | grep -v -E "CCL_WARN|^W1" | tail -n 6
-echo "== ours exit ${PIPESTATUS[0]}"
+echo "== ours exit ${PIPESTATUS[0]} ($(date +%T))"
 
 echo "== regress $1: ppl $(date +%T)"
-python bench/ppl.py -m "$MODEL" -c 512 --chunks 8 > "$OUT/ppl.log" 2>&1
-echo "== ppl exit $?"
+timeout 900 torchrun --nproc_per_node=2 bench/ppl.py -m "$MODEL" -c 512 --chunks 8 > "$OUT/ppl.log" 2>&1
+echo "== ppl exit $? ($(date +%T))"
 grep -E "Final estimate" "$OUT/ppl.log" | tail -n 1
 
 python - "$G/ours_baseline.json" "$OUT/ours_now.json" "$G/ours_ppl.txt" "$OUT/ppl.log" <<'PYEOF'

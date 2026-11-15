@@ -1,0 +1,5 @@
+== start 21:04:47
+.................                                                        [100%]
+17 passed in 12.25s
+== pytest gpu exit 0
+[gpu-window] timeout dopo 30 minuti
