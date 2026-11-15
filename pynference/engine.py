@@ -26,6 +26,7 @@ class Session:
         self.model.reset()
         self.tokens = []
         self.last_stop = None
+        self.last_truncated = False
 
     def prefill(self, ids: list[int]):
         """Logits of the last of `ids`. If `ids` extends `tokens`, only the new

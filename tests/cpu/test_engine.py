@@ -85,6 +85,7 @@ def test_engine_run_and_reset_single_process():
     assert out == [7, 2]
     e.run({"op": "reset"})
     assert e.session.tokens == [] and m.ctx == []
+    assert e.session.last_stop is None and not e.session.last_truncated
     out = e.run({"op": "generate", "ids": [1, 2, 3], "max_tokens": 1,
                  "sampling": dict(GREEDY), "stop_ids": [0]})
     assert out == [7]

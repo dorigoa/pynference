@@ -12,13 +12,16 @@ FILE with one turn per line) and broadcasts commands over the engine control
 channel (C4); the other ranks just `follow()`. Slash commands: /reset,
 /system TEXT, /exit. After every answer one line of statistics.
 
-The conversation ids are kept token-exact: the next prompt re-rendered by the
-template extends the previous one, so only the new tail is prefilled
-(`Session.prefill` prefix reuse). The previous answer may be a full answer
-(closed by a stop id) or one cut by `-n` (everything it fed is what it
-returned): both extend the context. When the extension breaks (rare tokenizer
-round-trip edges) the session re-prefills everything — correctness first.
-`[stats]` prints new prompt tokens / total prompt tokens per answer.
+The conversation ids are kept token-exact: after an answer that filled the
+context (closed by a stop id, or cut by `-n`) the next user turn is appended
+at token level (`continuation_ids`): the tokens that close the assistant turn
+the way the template would, then the template's own user block for the new
+turn. This is needed because a template that strips thought channels (Gemma
+4: `strip_thinking`, and past reasoning is never replayed) cannot re-render a
+thinking answer: a full re-render would neither extend the previous prompt
+nor keep the answer in it. When no continuation can be built the session
+re-encodes and re-prefills the whole prompt — correctness first. `[stats]`
+prints new prompt tokens / total prompt tokens per answer.
 """
 from __future__ import annotations
 
@@ -76,6 +79,33 @@ def _user_turns(args):
         line = line.strip()
         if line:
             yield line
+
+
+def continuation_ids(g, tok, tkwargs, user_turn: str, answer: str,
+                     last_stop: int | None, last_truncated: bool):
+    """Token ids that append `user_turn`'s user block to the context the
+    previous answer left, or None if no token-exact continuation is known
+    (the caller re-encodes the whole prompt).
+
+    The answer must have filled the context: closed by a stop id (which is
+    replayed first) or cut at `max_tokens` (it fed exactly what it returned).
+    The user block is taken from a fresh render of a one-message conversation
+    minus the shared head (BOS + system block); before it, the still-open
+    pieces of the assistant turn are closed the way the template would
+    (channel close for a thought cut by `-n`, then `<turn|>`)."""
+    if last_truncated:
+        close = "\n<channel|>" if answer.count("<|channel>") > answer.count("<channel|>") else ""
+        close_ids = tok.encode(close + "<turn|>\n", add_bos=False)
+    elif last_stop is not None and tok.decode([last_stop], special=True) == "<turn|>":
+        close_ids = [last_stop] + tok.encode("\n", add_bos=False)
+    else:
+        return None
+    block = render_chat(g, [{"role": "user", "content": user_turn}],
+                        add_generation_prompt=True, **tkwargs)
+    head = render_chat(g, [], add_generation_prompt=False, **tkwargs)
+    if not block.startswith(head):
+        return None
+    return close_ids + tok.encode(block[len(head):], add_bos=False)
 
 
 def _chat(argv: list[str]) -> int:
@@ -148,12 +178,17 @@ def _chat(argv: list[str]) -> int:
                 and (last.last_stop is not None                    # answer closed by a stop id
                      or last.last_truncated)                       # ... or cut at -n: all of it fed
                 and text.startswith(text_prev + answer_prev)):
-            # extend token-exactly: the stop id that closed the answer (if any), then the new tail
+            # the re-render extends the prompt: stop id (if any), then the new tail
             tail = text[len(text_prev + answer_prev):]
             closed = [] if last.last_stop is None else [last.last_stop]
-            ids = ids + closed + tok.encode(tail, add_bos=False)
+            ids = list(last.tokens) + closed + tok.encode(tail, add_bos=False)
         else:
-            ids = tok.encode(text, add_bos=False)
+            # token-level continuation for templates that cannot re-render
+            # the answer (thought channels stripped); None: re-encode all
+            cont = (continuation_ids(g, tok, tkwargs, turn, answer_prev,
+                                     last.last_stop, last.last_truncated)
+                    if text_prev is not None else None)
+            ids = list(last.tokens) + cont if cont is not None else tok.encode(text, add_bos=False)
         prev = last.tokens
         new_prompt = len(ids) - len(prev) if ids[:len(prev)] == prev and ids != prev else len(ids)
         prompt_len = len(ids)
