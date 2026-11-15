@@ -6,10 +6,41 @@ xpu:0 and the collectives are no-ops.
 from __future__ import annotations
 
 import os
-import pickle
+from datetime import timedelta
 
 import torch
 import torch.distributed as dist
+
+
+def _ctrl_group(rank: int, world: int):
+    """CPU-only gloo group for the control channel (contract C4).
+
+    `dist.new_group(backend="gloo")` is unusable once the default group is
+    bound to a GPU (job S7-1): torch inherits `bound_device_id` (xpu:0 here)
+    into every subgroup and the call dies in `pg._get_backend(xpu:0)` on the
+    gloo group — "No backend type associated with device type xpu" (passing
+    `device_id=cpu` is rejected with "Mismatched bound device"). So we call
+    the same private creator torch itself uses for new_group,
+    `_new_process_group_helper`, with `device_id=None`: exactly the group
+    new_group would build, minus the device binding. Private APIs on purpose,
+    tied to the torch installed on the PC (2.15.0+xpu)."""
+    from torch.distributed import distributed_c10d as c10d
+
+    ranks = list(range(world))
+    pg, _ = c10d._new_process_group_helper(
+        world,
+        rank,
+        ranks,
+        c10d.Backend.GLOO,
+        c10d._get_default_store(),
+        "pynference_ctrl",
+        # idle ranks sit in the first broadcast between chat turns
+        timeout=timedelta(days=1),
+        group_desc="pynference control channel",
+    )
+    c10d._world.pg_group_ranks[pg] = {g: g for g in ranks}
+    dist.barrier()  # like _new_group_with_tag's post-init barrier
+    return pg
 
 
 class TP:
@@ -76,23 +107,17 @@ class TP:
     def broadcast_obj(self, obj):
         """Send a pickled Python object from rank 0 to every rank (contract C4).
 
-        Runs on a CPU-only gloo group created on first use, so it never
-        interferes with the xccl tensor collectives. With one process it just
-        returns `obj`."""
+        Runs on a CPU-only gloo group created on first use (see `_ctrl_group`),
+        so it never interferes with the xccl tensor collectives. With one
+        process it just returns `obj`."""
         if self.world == 1:
             return obj
-        if not hasattr(self, "_gloo_group"):
-            self._gloo_group = dist.new_group(backend="gloo")
-        data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
-        size = torch.tensor([len(data)], dtype=torch.int64)
-        dist.broadcast(size, src=0, group=self._gloo_group)
-        buf = torch.zeros(int(size), dtype=torch.uint8)
-        if self.rank == 0:
-            buf.copy_(torch.frombuffer(bytearray(data), dtype=torch.uint8))
-        dist.broadcast(buf, src=0, group=self._gloo_group)
-        if self.rank == 0:
-            return obj
-        return pickle.loads(buf.numpy().tobytes())
+        if not hasattr(self, "_ctrl_group"):
+            self._ctrl_group = _ctrl_group(self.rank, self.world)
+        box = [obj]
+        dist.broadcast_object_list(box, src=0, group=self._ctrl_group,
+                                   device=torch.device("cpu"))
+        return box[0]
 
     def close(self):
         if self.world > 1:
