@@ -1,0 +1,73 @@
+== start 18:46:14
+Q8_0 GEMV   5376x10752:  551.9 GB/s    111.3 us  rel err 1.45e-03  (M=8 path rel err 2.94e-03)  cfg BLOCK_N: 4, BLOCK_K: 512, num_warps: 4, num_ctas: 1, num_stages: 3, maxnreg: None, ir_override: None
+Q8_0 GEMV  21504x 5376:  575.3 GB/s    213.5 us  rel err 1.60e-03  (M=8 path rel err 2.87e-03)  cfg BLOCK_N: 4, BLOCK_K: 512, num_warps: 4, num_ctas: 1, num_stages: 3, maxnreg: None, ir_override: None
+Q8_0 GEMV 131072x 5376:  590.4 GB/s   1268.0 us  rel err 1.55e-03  (M=8 path rel err 3.23e-03)  cfg BLOCK_N: 4, BLOCK_K: 512, num_warps: 4, num_ctas: 1, num_stages: 3, maxnreg: None, ir_override: None
+== quant selftest exit 0
+attn_decode Hq=16 Hkv=8 D=256 n=1024: 3.05e-07
+attn_decode Hq=16 Hkv=8 D=256 n=37: 5.36e-07
+attn_decode Hq=16 Hkv=2 D=512 n=3000: 1.43e-06
+== kernels selftest exit 0
+llama-server up on 8091
+== server-start exit 0
+tokens.json: 14 cases
+template.json: 2 prompts
+ref_probs chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+ref_probs chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+ref_probs code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+ref_probs raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+ref_probs.json: done
+== llama_golden exit 0
+== server-stop exit 0
+== ref ppl exit 0
+0.14.392.387 I Final estimate: PPL = 9995.7222 +/- 1462.71728
+  loaded 10/60 layers (2s)
+  loaded 20/60 layers (4s)
+  loaded 30/60 layers (6s)
+  loaded 40/60 layers (8s)
+  loaded 50/60 layers (13s)
+  loaded 60/60 layers (18s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0
+chat-it  same greedy tokens 24/24, max |dp| top-10 0.0000, mean partial KL 8.95e-08
+   ref:  '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capital of Italy?)'
+   ours: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capital of Italy?)'
+chat-en  same greedy tokens 24/24, max |dp| top-10 0.0000, mean partial KL 1.17e-07
+   ref:  '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+   ours: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code     same greedy tokens 24/24, max |dp| top-10 0.0012, mean partial KL 7.89e-06
+   ref:  '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+   ours: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw      same greedy tokens 24/24, max |dp| top-10 0.1675, mean partial KL 3.25e-03
+   ref:  ' Augustus Caesar became the first emperor. The empire expanded across three continents: Europe, Afri'
+   ours: ' Augustus Caesar became the first emperor. The empire expanded across three continents: Europe, Afri'
+C8 strict: PASS
+== diff strict exit 0
+== ppl exit 0
+[1]35159.0084,[2]13636.3288,[3]15430.1271,[4]23750.5061,[5]14783.4431,[6]10839.4172,[7]10821.7919,[8]10064.7540,
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 17.4s)
+  loaded 10/60 layers (4s)
+  loaded 20/60 layers (7s)
+  loaded 30/60 layers (10s)
+  loaded 40/60 layers (13s)
+  loaded 50/60 layers (17s)
+  loaded 60/60 layers (23s)
+
+[graph] wall time per token: 33.0 ms (30.31 tok/s)
+== decode exit 0
+total 224
+drwxrwxr-x 2 alvise alvise  4096 Nov 15 18:48 .
+drwxrwxr-x 3 alvise alvise    18 Nov 15 18:46 ..
+-rw-rw-r-- 1 alvise alvise   218 Nov 15 18:49 decode_profile.txt
+-rw-rw-r-- 1 alvise alvise  5010 Nov 15 18:47 llama-server-8091.log
+-rw-rw-r-- 1 alvise alvise 94008 Nov 15 18:48 ours_baseline.json
+-rw-rw-r-- 1 alvise alvise  1721 Nov 15 18:48 ours_ppl.log
+-rw-rw-r-- 1 alvise alvise   190 Nov 15 18:48 ours_ppl.txt
+-rw-rw-r-- 1 alvise alvise  1115 Nov 15 18:47 ref_ppl.log
+-rw-rw-r-- 1 alvise alvise    62 Nov 15 18:47 ref_ppl.txt
+-rw-rw-r-- 1 alvise alvise 92133 Nov 15 18:47 ref_probs.json
+-rw-rw-r-- 1 alvise alvise   621 Nov 15 18:46 template.json
+-rw-rw-r-- 1 alvise alvise  2333 Nov 15 18:46 tokens.json
+== end 18:49:48
