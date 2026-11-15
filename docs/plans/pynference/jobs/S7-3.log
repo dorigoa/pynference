@@ -1,0 +1,40 @@
+== start 23:52:41
+== code check ok
+fatal: not a git repository (or any of the parent directories): .git
+== chat exit 0 (23:53:44)
+[stats] prompt new 29/29 tok, 128 tok in 4.55s = 28.1 tok/s
+[stats] prompt new 45/45 tok, 128 tok in 4.53s = 28.3 tok/s
+[stats] prompt new 60/60 tok, 128 tok in 4.54s = 28.2 tok/s
+W1115 23:52:42.223000 711291 torch/distributed/run.py:982] *****************************************
+W1115 23:52:42.223000 711291 torch/distributed/run.py:982] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W1115 23:52:42.223000 711291 torch/distributed/run.py:982] *****************************************
+[pynference] gemma-4-31B-it (gemma4), 2 GPU(s)
+[pynference] loaded in 30.5s + warm-up 14.4s
+stats: [('29', '29'), ('45', '45'), ('60', '60')]
+== reuse check exit 1
+Traceback (most recent call last):
+  File "<stdin>", line 5, in <module>
+AssertionError: turn 1 should prefill the whole prompt: ('29', '29')
+.................                                                        [100%]
+17 passed in 10.29s
+== pytest gpu exit 0 (23:53:55)
+== regress exit 0 (23:57:07)
+== regress gemma4: ours --ref (graph) 23:53:55
+  loaded 50/60 layers (21s)
+  loaded 60/60 layers (59s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (23:55:16)
+== regress gemma4: ppl 23:55:16
+== ppl exit 0 (23:57:07)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 12.1s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 23:57:07
