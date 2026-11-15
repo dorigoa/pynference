@@ -8,8 +8,10 @@ the full softmax are recorded.
   python bench/compare_probs.py fetch --url http://localhost:8091 -m MODEL.gguf -o results/ref_probs.json
   # pynference
   torchrun --nproc_per_node=2 bench/compare_probs.py ours -m MODEL.gguf -o results/our_probs.json
-  # comparison
-  python bench/compare_probs.py diff results/ref_probs.json results/our_probs.json
+  # pynference, prompt ids taken from a reference file (bench/llama_golden.py), not our tokenizer
+  torchrun --nproc_per_node=2 bench/compare_probs.py ours -m MODEL.gguf --ref results/ref_probs.json -o results/our_probs.json
+  # comparison (--strict applies contract C8 and exits 1 on violation)
+  python bench/compare_probs.py diff results/ref_probs.json results/our_probs.json [--strict]
 """
 import argparse
 import json
@@ -63,7 +65,11 @@ def ours(args):
     from pynference.models import load_model
     from pynference.parallel import TP
     tp = TP()
-    tok, prompts = prompts_ids(args.model)
+    tok = Tokenizer(GGUFFile(args.model))
+    if args.ref:   # prompt ids from a reference file: independent of our tokenizer
+        prompts = [(e["name"], e["prompt"]) for e in json.load(open(args.ref))]
+    else:
+        prompts = [(name, tok.encode(text)) for name, text in PROMPTS]
     g = GGUFFile(args.model)
     model = load_model(g, tp, max_ctx=1024)
     model.fast_decode = args.decode != "torch"
@@ -95,24 +101,74 @@ def ours(args):
     tp.close()
 
 
+NEAR_TIE, MAX_KL = 0.15, 1e-2   # contract C8 thresholds
+
+
+def step_compare(r, o):
+    """Compare one prompt up to the first greedy divergence.
+
+    Returns (same, max_dp, mean_kl, divergence) where divergence is None or
+    (step_index, ref_top1_minus_top2)."""
+    same, max_dp, kl_terms, div = 0, 0.0, [], None
+    for i, (rs, os_) in enumerate(zip(r["steps"], o["steps"])):
+        rp = {t["id"]: t["p"] for t in rs["top"]}
+        op = {t["id"]: t["p"] for t in os_["top"]}
+        common = rp.keys() & op.keys()
+        max_dp = max([max_dp] + [abs(rp[k] - op[k]) for k in common])
+        kl_terms.append(sum(rp[k] * math.log(rp[k] / op[k]) for k in common if rp[k] > 0 and op[k] > 0))
+        if rs["id"] != os_["id"]:
+            top = sorted((t["p"] for t in rs["top"]), reverse=True)
+            div = (i, top[0] - (top[1] if len(top) > 1 else 0.0))
+            break
+        same += 1
+    return same, max_dp, sum(kl_terms) / max(len(kl_terms), 1), div
+
+
+def strict_problems(ref, our):
+    """Violations of contract C8; an empty list means the contract holds."""
+    problems, identical = [], 0
+    if len(ref) != len(our):
+        problems.append(f"prompt count differs: {len(ref)} in ref, {len(our)} in ours")
+    stats = []
+    for r, o in zip(ref, our):
+        if r["name"] != o["name"]:
+            problems.append(f"prompt order differs: {r['name']} vs {o['name']}")
+            continue
+        if r["prompt"] != o["prompt"]:
+            problems.append(f"{r['name']}: prompt ids differ")
+            continue
+        stats.append((r["name"], step_compare(r, o)))
+    for name, (_, _, mean_kl, div) in stats:
+        if div is None:
+            identical += 1
+        elif div[1] >= NEAR_TIE:
+            problems.append(f"{name}: greedy diverges at step {div[0]} but the reference gap is "
+                            f"{div[1]:.3f} >= {NEAR_TIE} (not a near-tie)")
+        if mean_kl > MAX_KL:
+            problems.append(f"{name}: mean partial KL {mean_kl:.2e} > {MAX_KL}")
+    need = len(ref) - 1 if len(ref) >= 4 else len(ref)   # at least 3 of the 4 prompts match fully
+    if identical < need:
+        problems.append(f"greedy-identical prompts: {identical}/{len(ref)}, {need} required")
+    return problems
+
+
 def diff(args):
     ref, our = json.load(open(args.ref)), json.load(open(args.ours))
     for r, o in zip(ref, our):
         assert r["prompt"] == o["prompt"], r["name"]
-        same, max_dp, kl_terms = 0, 0.0, []
-        for rs, os_ in zip(r["steps"], o["steps"]):
-            rp = {t["id"]: t["p"] for t in rs["top"]}
-            op = {t["id"]: t["p"] for t in os_["top"]}
-            common = rp.keys() & op.keys()
-            max_dp = max([max_dp] + [abs(rp[k] - op[k]) for k in common])
-            kl_terms.append(sum(rp[k] * math.log(rp[k] / op[k]) for k in common if rp[k] > 0 and op[k] > 0))
-            if rs["id"] != os_["id"]:
-                break
-            same += 1
+        same, max_dp, mean_kl, _ = step_compare(r, o)
         n = min(len(r["steps"]), len(o["steps"]))
         print(f"{r['name']:8s} same greedy tokens {same}/{n}, max |dp| top-{N_PROBS} {max_dp:.4f}, "
-              f"mean partial KL {sum(kl_terms) / max(len(kl_terms), 1):.2e}")
+              f"mean partial KL {mean_kl:.2e}")
         print(f"   ref:  {r['text'][:100]!r}\n   ours: {o['text'][:100]!r}")
+    if args.strict:
+        problems = strict_problems(ref, our)
+        for p in problems:
+            print(f"C8 FAIL: {p}")
+        if problems:
+            print("C8 strict: FAIL")
+            sys.exit(1)
+        print("C8 strict: PASS")
 
 
 def main():
@@ -125,11 +181,13 @@ def main():
     a = sub.add_parser("ours")
     a.add_argument("-m", "--model", required=True)
     a.add_argument("-o", "--out", required=True)
+    a.add_argument("--ref", help="reference file (bench/llama_golden.py): take prompt ids from it, not our tokenizer")
     a.add_argument("--tokenwise", action="store_true", help="feed the prompt one token at a time (fp32 path)")
     a.add_argument("--decode", choices=["graph", "fused", "torch"], default="graph")
     a = sub.add_parser("diff")
     a.add_argument("ref")
     a.add_argument("ours")
+    a.add_argument("--strict", action="store_true", help=f"apply contract C8 (near-tie {NEAR_TIE}, KL <= {MAX_KL}) and exit 1 on violation")
     args = ap.parse_args()
     {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
 
