@@ -1,0 +1,24 @@
+[
+ {
+  "name": "chat-it",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Qual è la capitale d'Italia? Rispondi in una frase."
+   }
+  ],
+  "kwargs": {},
+  "prompt": "\u003c|turn>system\n\u003c|think|>\n\u003cturn|>\n\u003c|turn>user\nQual è la capitale d'Italia? Rispondi in una frase.\u003cturn|>\n\u003c|turn>model\n"
+ },
+ {
+  "name": "chat-en",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Write a haiku about the sea."
+   }
+  ],
+  "kwargs": {},
+  "prompt": "\u003c|turn>system\n\u003c|think|>\n\u003cturn|>\n\u003c|turn>user\nWrite a haiku about the sea.\u003cturn|>\n\u003c|turn>model\n"
+ }
+]
