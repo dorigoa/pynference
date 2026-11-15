@@ -1,0 +1,38 @@
+== start 00:19:22
+fatal: not a git repository (or any of the parent directories): .git
+== code check ok
+== chat exit 0 (00:20:23)
+[stats] prompt new 29/29 tok, 128 tok in 4.56s = 28.1 tok/s
+[stats] prompt new 18/175 tok, 128 tok in 4.59s = 27.9 tok/s
+[stats] prompt new 17/320 tok, 51 tok in 1.98s = 25.8 tok/s
+W1116 00:19:23.299000 743737 torch/distributed/run.py:982] *****************************************
+W1116 00:19:23.299000 743737 torch/distributed/run.py:982] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W1116 00:19:23.299000 743737 torch/distributed/run.py:982] *****************************************
+[pynference] gemma-4-31B-it (gemma4), 2 GPU(s)
+[pynference] loaded in 31.1s + warm-up 14.5s
+stats: [('29', '29'), ('18', '175'), ('17', '320')]
+== prefix reuse OK
+== reuse check exit 0
+.................                                                        [100%]
+17 passed in 10.90s
+== pytest gpu exit 0 (00:20:35)
+== regress exit 0 (00:23:57)
+== regress gemma4: ours --ref (graph) 00:20:35
+  loaded 50/60 layers (22s)
+  loaded 60/60 layers (50s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (00:21:48)
+== regress gemma4: ppl 00:21:48
+== ppl exit 0 (00:23:57)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 12.9s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 00:23:57
