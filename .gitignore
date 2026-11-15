@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 *.egg-info/
 results/
+scratch/
+.pytest_cache/
+docs/plans/pynference/jobs/*.out/
+docs/plans/pynference/jobs/*.full

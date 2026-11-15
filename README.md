@@ -58,3 +58,11 @@ Supported so far: Gemma 4 dense (`gemma4`, e.g. Gemma-4-31B) with Q8_0 weights:
 
 Results and design consequences: [docs/phase0a.md](docs/phase0a.md).
 Phase 0b (GGUF, Gemma 4): [docs/phase0b.md](docs/phase0b.md).
+
+## Plan
+
+The remaining work (engine, server, quant types, GPT-OSS-120B, Qwen3.8-27B,
+Qwen3.8-Flash-Next) is in [docs/plans/pynference-plan.md](docs/plans/pynference-plan.md),
+in sections run by a local agent with
+`docs/plans/pynference/tools/run-sections.sh` (GPU jobs run while the LLM
+server on the PC is paused).

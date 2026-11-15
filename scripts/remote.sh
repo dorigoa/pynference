@@ -15,6 +15,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 rsync -az --delete \
     --exclude '.git/' --exclude '.venv/' --exclude '__pycache__/' --exclude 'results/' \
+    --exclude '.pytest_cache/' --exclude '/scratch/' --exclude '/docs/plans/pynference/jobs/*.out/' \
     "$ROOT/" "$HOST:$RDIR/"
 
 [ $# -eq 0 ] && exit 0
