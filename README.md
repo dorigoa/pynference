@@ -29,6 +29,20 @@ GGUF), `--ctx` max context, `--decode graph|fused|torch` decode path,
 Supported so far: Gemma 4 dense (`gemma4`, e.g. Gemma-4-31B) with Q8_0 weights:
 ~30 tok/s generation, ~790 tok/s prompt on the two B70s.
 
+### Chat
+
+```bash
+scripts/remote.sh 'torchrun --nproc_per_node=2 -m pynference.cli chat \
+    -m /nvme/gguf/gemma-4-31B/gemma-4-31B-it-Q8_0.gguf --system "Sei breve."'
+```
+
+Rank 0 reads your lines; the others follow. Commands: `/reset` (new
+conversation), `/system TEXT`, `/exit`. `--script FILE` feeds one user turn per
+line (for tests), `-n` max answer tokens, `--temp 0` for greedy. After each
+answer a line reports the new prompt tokens (conversation history is reused,
+only the new tail is prefilled) and tok/s. `python -m pynference.cli generate`
+takes the same options as `python -m pynference.generate`.
+
 ## Layout
 
 | Path | Content |
