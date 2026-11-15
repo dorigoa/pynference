@@ -1,0 +1,16 @@
+[
+ "Hello   world",
+ "Line one\n\n\nLine two",
+ "col1\tcol2\tcol3",
+ "L'Università è a Bologna: caffè, è.",
+ "日本語のテキスト、中文的文本",
+ "Caffè ☕ e pizza 🍕🎉",
+ "def f(x):\n    return x * 2  # inline",
+ "3.14159, 1000000, -42, 1e-9, 0.5%",
+ "\u003c|turn>user\nCiao\u003cturn|>",
+ "\u003c|think|>\u003c|channel>thought\u003cchannel|>",
+ "\u003c|tool_response>\u003cchannel|>",
+ "  leading and trailing   ",
+ "«È un \"problema\" risolto!» — davvero?",
+ "Mi \t pià\t\n\n \t davvero "
+]

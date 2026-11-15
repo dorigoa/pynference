@@ -1,0 +1,22 @@
+[
+  {
+    "name": "chat-it",
+    "messages": [
+      {"role": "user", "content": "Qual è la capitale d'Italia? Rispondi in una frase."}
+    ]
+  },
+  {
+    "name": "chat-en",
+    "messages": [
+      {"role": "user", "content": "Write a haiku about the sea."}
+    ]
+  },
+  {
+    "name": "code",
+    "text": "def fibonacci(n):\n    \"\"\"Return the n-th Fibonacci number.\"\"\"\n"
+  },
+  {
+    "name": "raw",
+    "text": "The history of the Roman Empire began in 27 BC when"
+  }
+]
