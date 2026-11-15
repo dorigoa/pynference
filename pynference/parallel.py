@@ -6,6 +6,7 @@ xpu:0 and the collectives are no-ops.
 from __future__ import annotations
 
 import os
+import pickle
 
 import torch
 import torch.distributed as dist
@@ -71,6 +72,27 @@ class TP:
     def barrier(self):
         if self.world > 1:
             dist.barrier()
+
+    def broadcast_obj(self, obj):
+        """Send a pickled Python object from rank 0 to every rank (contract C4).
+
+        Runs on a CPU-only gloo group created on first use, so it never
+        interferes with the xccl tensor collectives. With one process it just
+        returns `obj`."""
+        if self.world == 1:
+            return obj
+        if not hasattr(self, "_gloo_group"):
+            self._gloo_group = dist.new_group(backend="gloo")
+        data = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+        size = torch.tensor([len(data)], dtype=torch.int64)
+        dist.broadcast(size, src=0, group=self._gloo_group)
+        buf = torch.zeros(int(size), dtype=torch.uint8)
+        if self.rank == 0:
+            buf.copy_(torch.frombuffer(bytearray(data), dtype=torch.uint8))
+        dist.broadcast(buf, src=0, group=self._gloo_group)
+        if self.rank == 0:
+            return obj
+        return pickle.loads(buf.numpy().tobytes())
 
     def close(self):
         if self.world > 1:
