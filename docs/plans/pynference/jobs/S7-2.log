@@ -1,0 +1,38 @@
+== start 23:32:36
+== chat exit 0 (23:33:47)
+[stats] prompt new 29/157 tok, 128 tok in 4.61s = 27.8 tok/s
+[stats] prompt new 45/173 tok, 128 tok in 4.56s = 28.1 tok/s
+[stats] prompt new 60/188 tok, 128 tok in 4.57s = 28.0 tok/s
+W1115 23:32:36.985000 686241 torch/distributed/run.py:982] *****************************************
+W1115 23:32:36.985000 686241 torch/distributed/run.py:982] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W1115 23:32:36.985000 686241 torch/distributed/run.py:982] *****************************************
+[pynference] gemma-4-31B-it (gemma4), 2 GPU(s)
+[pynference] loaded in 31.3s + warm-up 15.1s
+stats: [('29', '157'), ('45', '173'), ('60', '188')]
+Traceback (most recent call last):
+  File "<stdin>", line 5, in <module>
+AssertionError: turn 1 prompt too small: ('29', '157')
+== reuse check exit 1
+.................                                                        [100%]
+17 passed in 9.39s
+== pytest gpu exit 0 (23:33:57)
+== regress exit 0 (23:36:13)
+== regress gemma4: ours --ref (graph) 23:33:57
+  loaded 50/60 layers (18s)
+  loaded 60/60 layers (48s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (23:35:08)
+== regress gemma4: ppl 23:35:08
+== ppl exit 0 (23:36:13)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 12.4s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 23:36:13

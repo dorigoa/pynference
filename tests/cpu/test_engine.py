@@ -30,7 +30,17 @@ def test_generate_max_tokens_and_counts():
     assert out == [7, 2, 4, 8, 4]
     assert s.tokens == [1, 2, 3, 7, 2, 4, 8, 4] == m.ctx
     assert m.forward_sizes == [3, 1, 1, 1, 1, 1]
-    assert s.last_stop is None
+    assert s.last_stop is None and s.last_truncated
+
+
+def test_generate_cut_at_max_tokens_extends_the_context():
+    m, s = make()
+    out = s.generate([1, 2, 3], 2, dict(GREEDY), stop_ids={0})   # cut: 7, 2, all of it fed
+    assert out == [7, 2] and s.last_stop is None and s.last_truncated
+    ids = [1, 2, 3, 7, 2, 5]                                     # new turn, no stop id to add
+    out = s.generate(ids, 1, dict(GREEDY), stop_ids={0})
+    assert out == [9]                                             # sum(ids) % 12 + 1 = 9
+    assert m.forward_sizes == [3, 1, 1, 1, 1]                     # prefill: only the new id
 
 
 def test_generate_second_turn_feeds_only_the_new_tokens():
@@ -46,7 +56,7 @@ def test_generate_stops_on_stop_id():
     m, s = make()
     out = s.generate([1, 2, 3], 9, dict(GREEDY), stop_ids={4})
     assert out == [7, 2]
-    assert s.last_stop == 4
+    assert s.last_stop == 4 and not s.last_truncated
     assert s.tokens == [1, 2, 3, 7, 2] == m.ctx
 
 
@@ -54,6 +64,7 @@ def test_generate_stop_strings():
     m, s = make()
     out = s.generate([1, 2, 3], 9, dict(GREEDY), stop_ids={0}, stop_strings=("4 8",))
     assert out == [7, 2]                                          # cut before the match
+    assert s.last_stop is None and not s.last_truncated           # result cut short of the fed part
     assert s.tokens == [1, 2, 3, 7, 2, 4] == m.ctx                # 4 was fed before the match
 
 

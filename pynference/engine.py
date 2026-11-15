@@ -20,6 +20,7 @@ class Session:
         self.model, self.tok = model, tok
         self.tokens: list[int] = []          # exactly the ids fed to the model
         self.last_stop: int | None = None    # stop id that ended the last generate
+        self.last_truncated: bool = False    # it ended on max_tokens: everything fed came back
 
     def reset(self) -> None:
         self.model.reset()
@@ -51,13 +52,17 @@ class Session:
         text)` sees every generated token as it arrives. After the call
         `tokens` equals `ids` + the tokens fed to the model: normally
         `ids + result`, but a stop string may cut the result earlier than the
-        model's progress (the fed part stays in the context)."""
+        model's progress (the fed part stays in the context). So the next call
+        can extend `tokens` exactly only when `last_stop` is set (the stop id
+        still has to be fed) or `last_truncated` is True (`max_tokens` cut it:
+        `result` covers everything fed)."""
         sampler = Sampler(**sampling) if isinstance(sampling, dict) else sampling
         stop_ids = set(stop_ids)
         logits = self.prefill(ids)
         generated: list[int] = []
         out = StreamDecoder(self.tok)
         self.last_stop = None
+        self.last_truncated = False
         while len(generated) < max_tokens:
             nxt = sampler(logits)
             if nxt in stop_ids:
@@ -75,6 +80,8 @@ class Session:
                     break
             logits = self.model.forward([nxt])
             self.tokens.append(nxt)
+        else:                               # no break: cut at max_tokens
+            self.last_truncated = True
         return generated
 
     def _stop_string_cut(self, generated: list[int], stop_strings) -> int | None:

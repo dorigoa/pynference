@@ -14,8 +14,11 @@ channel (C4); the other ranks just `follow()`. Slash commands: /reset,
 
 The conversation ids are kept token-exact: the next prompt re-rendered by the
 template extends the previous one, so only the new tail is prefilled
-(`Session.prefill` prefix reuse). When that extension breaks (rare tokenizer
+(`Session.prefill` prefix reuse). The previous answer may be a full answer
+(closed by a stop id) or one cut by `-n` (everything it fed is what it
+returned): both extend the context. When the extension breaks (rare tokenizer
 round-trip edges) the session re-prefills everything — correctness first.
+`[stats]` prints new prompt tokens / total prompt tokens per answer.
 """
 from __future__ import annotations
 
@@ -140,16 +143,20 @@ def _chat(argv: list[str]) -> int:
             continue
         messages = messages + [{"role": "user", "content": turn}]
         text = render_chat(g, messages, add_generation_prompt=True, **tkwargs)
+        last = engine.session
         if (text_prev is not None and answer_prev is not None
-                and engine.session.last_stop is not None          # an answer closed by a stop id
+                and (last.last_stop is not None                    # answer closed by a stop id
+                     or last.last_truncated)                       # ... or cut at -n: all of it fed
                 and text.startswith(text_prev + answer_prev)):
-            # extend token-exactly: what closed the answer, then the new tail
+            # extend token-exactly: the stop id that closed the answer (if any), then the new tail
             tail = text[len(text_prev + answer_prev):]
-            ids = ids + [engine.session.last_stop] + tok.encode(tail, add_bos=False)
+            closed = [] if last.last_stop is None else [last.last_stop]
+            ids = ids + closed + tok.encode(tail, add_bos=False)
         else:
             ids = tok.encode(text, add_bos=False)
-        prev = engine.session.tokens
+        prev = last.tokens
         new_prompt = len(ids) - len(prev) if ids[:len(prev)] == prev and ids != prev else len(ids)
+        prompt_len = len(ids)
         t0 = time.perf_counter()
         generated = engine.run({"op": "generate", "ids": ids, "max_tokens": args.n_predict,
                                 "sampling": sampling, "stop_ids": stop_ids}, on_token=on_token)
@@ -161,7 +168,7 @@ def _chat(argv: list[str]) -> int:
         messages = messages + [{"role": "assistant", "content": answer}]
         ids = list(engine.session.tokens)
         text_prev, answer_prev = text, answer
-        print(f"[stats] prompt new {new_prompt}/{len(ids)} tok, {len(generated)} tok in "
+        print(f"[stats] prompt new {new_prompt}/{prompt_len} tok, {len(generated)} tok in "
               f"{dt:.2f}s = {len(generated) / max(dt, 1e-9):.1f} tok/s", flush=True)
 
     engine.run({"op": "stop"})
