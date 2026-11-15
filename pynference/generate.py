@@ -20,28 +20,8 @@ import torch
 from .gguf import GGUFFile
 from .models import load_model
 from .parallel import TP
+from .sampling import Sampler
 from .tokenizer import StreamDecoder, Tokenizer, chat_prompt
-
-
-class Sampler:
-    def __init__(self, temp: float, top_k: int, top_p: float, seed: int):
-        self.temp, self.top_k, self.top_p = temp, top_k, top_p
-        self.gen = torch.Generator().manual_seed(seed)
-
-    def __call__(self, logits: torch.Tensor) -> int:
-        logits = logits.float().cpu()
-        if self.temp <= 0:
-            return int(logits.argmax())
-        if self.top_k > 0:
-            vals, idx = logits.topk(min(self.top_k, logits.numel()))
-        else:
-            vals, idx = logits.sort(descending=True)
-        probs = torch.softmax(vals / self.temp, dim=-1)
-        if self.top_p < 1.0:
-            keep = (probs.cumsum(0) - probs) < self.top_p
-            probs = probs * keep
-            probs = probs / probs.sum()
-        return int(idx[torch.multinomial(probs, 1, generator=self.gen)])
 
 
 def top_probs(tok: Tokenizer, logits: torch.Tensor, n: int) -> list[tuple[str, float]]:
