@@ -1,2 +1,5 @@
 # torch (XPU build) is installed separately by scripts/setup_env.sh
 numpy
+jinja2
+pytest
+regex
