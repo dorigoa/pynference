@@ -39,7 +39,7 @@ DESKTOP='gnome-shell|gjs|gnome-remote-desktop|Xwayland|Xorg|mutter'
 
 say() { printf '%s [gpu-window] %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { say "ERRORE: $2" >&2; exit "$1"; }
-rsh() { ssh -o BatchMode=yes -o ConnectTimeout=15 "$HOST" "$@"; }
+rsh() { ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$HOST" "$@"; }
 
 strata_url() {
   local u
@@ -99,7 +99,10 @@ strata_start() {
   if [ "$st" = up ]; then say "Strata è già attivo"; return 0; fi
   if [ "$st" = down ]; then
     say "avvio Strata ($STRATA_START)"
-    rsh "mkdir -p ~/.cache && cd ~ && setsid nohup $STRATA_START > ~/.cache/pynference-strata.log 2>&1 < /dev/null &" \
+    # Solo setsid va in background, con tutti i file descriptor sul log: con
+    # "a && b && c &" bash mette in background tutta la lista in una subshell che
+    # tiene aperto l'output di ssh finché Strata gira, e ssh non torna più.
+    rsh "mkdir -p ~/.cache && cd ~ && (setsid nohup $STRATA_START < /dev/null > ~/.cache/pynference-strata.log 2>&1 &)" \
       || die 3 "avvio di Strata non riuscito"
   else
     say "Strata si sta caricando"
