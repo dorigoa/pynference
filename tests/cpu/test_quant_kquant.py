@@ -3,8 +3,8 @@
 gguf-py is the reference for the Triton kernel, but the element -> (sub-block,
 byte, bit) mappings of the K-quants are easy to get wrong in the same way twice
 (S9 lesson: an index typo costs a whole GPU job). The numpy decode below is
-written straight from `dequantize_row_q4_K`, `q5_K` and `q6_K` in
-ggml-quants.c, so a mismatch between it and gguf-py pins the layout down.
+written straight from `dequantize_row_q2_K` ... `q6_K` in ggml-quants.c, so a
+mismatch between it and gguf-py pins the layout down.
 """
 import numpy as np
 import pytest
@@ -62,15 +62,49 @@ def hand_q6(raw, n, k):
     return (d * sc * (q6 - 32)).reshape(n, k).astype(np.float32)
 
 
+def hand_q2(raw, n, k):
+    """x = d*(sc&15)*q - dmin*(sc>>4), 16 sub-blocks of 16 (Q2_K)."""
+    blk = raw.reshape(n, -1, TYPES["Q2_K"].block_bytes)
+    e = np.arange(256)
+    sc = blk[..., e >> 4]                                # scales @0..15
+    qb = blk[..., 16 + ((e >> 7) << 5) + (e & 31)]       # qs @16..79
+    q = (qb >> (2 * ((e >> 5) & 3))) & 3
+    d = _fp16(blk, 80)[..., None]
+    dmin = _fp16(blk, 82)[..., None]
+    return (d * (sc & 0xF) * q - dmin * (sc >> 4)).reshape(n, k).astype(np.float32)
+
+
+def hand_q3(raw, n, k):
+    """x = d*(sc-32)*(q-4), +4 where the hmask bit is NOT set (Q3_K)."""
+    blk = raw.reshape(n, -1, TYPES["Q3_K"].block_bytes)
+    e = np.arange(256)
+    s = e >> 4                                           # 16 sub-blocks of 16
+    S = blk[..., 96:108]                                 # 12 bytes, 6 bits each
+    lo = S[..., s & 7]                                   # low nibble, high nibble from s=8
+    hi = S[..., 8 + (s & 3)]                             # 2 high bits, 4 per byte
+    sc = ((lo >> np.where(s >= 8, 4, 0)) & 0xF) | (((hi >> (2 * (s >> 2))) & 3) << 4)
+    qb = blk[..., 32 + ((e >> 7) << 5) + (e & 31)]       # qs @32..95
+    q = (qb >> (2 * ((e >> 5) & 3))) & 3
+    hm = blk[..., e & 31]                                # hmask @0..31
+    hb = (hm >> (e >> 5)) & 1
+    d = _fp16(blk, 108)[..., None]
+    return (d * (sc.astype(np.int32) - 32) * (q + 4 * hb - 4)).reshape(n, k).astype(np.float32)
+
+
 def hand(raw, qtype, n, k):
+    if qtype == "Q2_K":
+        return hand_q2(raw, n, k)
+    if qtype == "Q3_K":
+        return hand_q3(raw, n, k)
     return hand_q6(raw, n, k) if qtype == "Q6_K" else hand_kquant(raw, qtype, n, k)
 
 
 # fp16 scale fields of each type, as byte offsets inside one super-block
-_FP16_BYTES = {"Q4_K": (0, 2), "Q5_K": (0, 2), "Q6_K": (208,)}
+_FP16_BYTES = {"Q2_K": (80, 82), "Q3_K": (108,), "Q4_K": (0, 2), "Q5_K": (0, 2),
+               "Q6_K": (208,)}
 
 
-@pytest.mark.parametrize("qtype", ["Q4_K", "Q5_K", "Q6_K"])
+@pytest.mark.parametrize("qtype", ["Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K"])
 def test_kquant_layout(qtype):
     raw = make_test_blocks(qtype, N, K, seed=11)
     assert raw.shape == (N, row_bytes(qtype, K))
@@ -80,7 +114,7 @@ def test_kquant_layout(qtype):
     assert np.allclose(ref, hand(raw, qtype, N, K), rtol=1e-6, atol=0)
 
 
-@pytest.mark.parametrize("qtype", ["Q4_K", "Q5_K", "Q6_K"])
+@pytest.mark.parametrize("qtype", ["Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K"])
 def test_kquant_scales_in_range(qtype):
     """make_test_blocks must keep every fp16 field of every super-block finite."""
     raw = make_test_blocks(qtype, N, K, seed=5)

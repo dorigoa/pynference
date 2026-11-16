@@ -24,7 +24,7 @@ from pynference.quant.testing import make_test_blocks
 TYPES = ["Q4_0", "Q4_1", "Q5_0", "Q5_1", "IQ4_NL", "Q8_0"]
 # K-quants (S10): k must be a whole number of 256-element super-blocks, and 512
 # covers every element index of the super-block layout twice
-KTYPES = ["Q4_K", "Q5_K", "Q6_K"]
+KTYPES = ["Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K"]
 
 
 def test_dequant_native_interpreted():
