@@ -29,7 +29,7 @@ KTYPES = ["Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K"]
 # (MXFP4 32, Q2_0 64, IQ4_XS is a 256-element super-block)
 S11_K = {"MXFP4": 64, "Q2_0": 64, "IQ4_XS": 512}
 # S12: grid types, 256-element super-blocks; 512 covers every index twice
-S12_K = {"IQ3_XXS": 512}
+S12_K = {"IQ3_XXS": 512, "IQ2_S": 512}
 # S11 + S12 super-block types share the k-tail gemv checks below
 SUPER_K = {**S11_K, **S12_K}
 

@@ -86,6 +86,12 @@ _LAYOUT = {
     # element: grid byte of IQ3XXS_GRID[idx] and ksigns bit (dequantize_row_iq3_xxs)
     "IQ3_XXS": dict(BB=98,  WPB=49,  QS=2,  MS=None, QHB=None,
                     BS=256, DW=0,   DMW=None, SCL=66, HMB=None),
+    # IQ2_S (S12): d fp16, qs 64 bytes (first 32: 8-bit grid index at
+    # 4*ib32+l, last 32 at QS+32: signs, bit j of the byte = kmask bit j),
+    # qh 8 bytes (2 high index bits per l), scales 8 bytes (two 4-bit db
+    # scales per 32-element sub-block); value IQ2S_GRID[idx] byte j (dequantize_row_iq2_s)
+    "IQ2_S":   dict(BB=82,  WPB=41,  QS=2,  MS=None, QHB=66,
+                    BS=256, DW=0,   DMW=None, SCL=74, HMB=None),
 }
 
 
@@ -151,6 +157,22 @@ def _decode_k(RAW8, RAWI, W16, GRID, KSGN, off8, b, e,
         qb = tl.load(RAW8 + off8 + b * BB + QS + ib * 8 + 2 * l + (jj >> 2)).to(tl.int32)
         g = tl.load(GRID + qb * 4 + (jj & 3)).to(tl.float32)
         sg = tl.load(KSGN + ((aux >> (7 * l)) & 127)).to(tl.int32)
+        return db * g * tl.where(((sg >> jj) & 1) == 1, -1.0, 1.0)
+    if KQ == "IQ2_S":  # x = db * grid_byte * sign (dequantize_row_iq2_s):
+        # element e: ib = e>>5 sub-block, l = (e>>3)&3 group of 8, jj = e&7;
+        # 10-bit grid index = qs[4ib+l] | 2 bits of qh[ib] at 2*l; db from the
+        # scales nibble (low for l<2); sign bit jj of qs[32 + 4ib + l]
+        # (kmask_iq2xs[jj] = 1 << jj)
+        ib = e >> 5
+        l = (e >> 3) & 3
+        jj = e & 7
+        qi = (tl.load(RAW8 + off8 + b * BB + QS + ib * 4 + l).to(tl.int32)
+              | ((tl.load(RAW8 + off8 + b * BB + QHB + ib).to(tl.int32) >> (2 * l)) & 3) << 8)
+        g = tl.load(GRID + qi * 8 + jj).to(tl.float32)
+        sc = tl.load(RAW8 + off8 + b * BB + SCL + ib).to(tl.int32)
+        nib = (sc >> tl.where(l < 2, 0, 4)) & 0xF
+        db = d * (0.5 + nib) * 0.25
+        sg = tl.load(RAW8 + off8 + b * BB + QS + 32 + ib * 4 + l).to(tl.int32)
         return db * g * tl.where(((sg >> jj) & 1) == 1, -1.0, 1.0)
     if KQ == "IQ4_XS":  # x = d*(ls-32)*kvalues_iq4nl[q], ls 6-bit per 32 (dequantize_row_iq4_xs)
         ib = e >> 5

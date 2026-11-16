@@ -9,13 +9,14 @@ import numpy as np
 import pytest
 
 from pynference.quant import TYPES, check_split, row_bytes
-from pynference.quant.iq_grids import IQ3XXS_GRID, KSIGNS_IQ2XS
+from pynference.quant.iq_grids import IQ2S_GRID, IQ3XXS_GRID, KSIGNS_IQ2XS
 from pynference.quant.ref import ref_dequant
 from pynference.quant.testing import make_test_blocks
 
 N, K = 3, 512
 
 _IQ3XXS_BYTES = np.array(IQ3XXS_GRID, dtype=np.uint32).view(np.uint8)
+_IQ2S_BYTES = np.array(IQ2S_GRID, dtype=np.uint64).view(np.uint8)
 _KSIGNS = np.array(KSIGNS_IQ2XS, dtype=np.int32)
 
 
@@ -48,7 +49,31 @@ def hand_iq3_xxs(raw, n, k):
     return (db * gb * sgn).reshape(n, k).astype(np.float32)
 
 
-HAND = {"IQ3_XXS": hand_iq3_xxs}
+def hand_iq2_s(raw, n, k):
+    """x = db * grid_byte * sign (dequantize_row_iq2_s).
+
+    8 sub-blocks of 32; element e: ib = e>>5, l = (e>>3)&3, jj = e&7. The
+    10-bit grid index is qs[4ib+l] | 2 bits of qh[ib] (at shift 8-2*l, the
+    same as (qh>>2l)&3 at bit 8); db = d*(0.5 + nibble)*0.25 with the low
+    nibble of scales[ib] for l<2 and the high one for l>=2; the sign bit is
+    bit jj of qs[32 + 4ib + l] (kmask_iq2xs[jj] = 1 << jj).
+    """
+    blk = raw.reshape(n, -1, TYPES["IQ2_S"].block_bytes)
+    e = np.arange(256)
+    ib, l, jj = e >> 5, (e >> 3) & 3, e & 7
+    d = _fp16(blk, 0)[..., None]
+    qi = (blk[..., 2 + ib * 4 + l].astype(np.int32)
+          | (((blk[..., 66 + ib].astype(np.int32) >> (2 * l)) & 3) << 8))
+    gb = _IQ2S_BYTES[qi * 8 + jj].astype(np.float32)
+    sc = blk[..., 74 + ib].astype(np.int32)
+    nib = np.where(l < 2, sc & 0xF, sc >> 4)
+    db = d * (0.5 + nib) * 0.25
+    sg = blk[..., 34 + ib * 4 + l].astype(np.int32)
+    sgn = np.where(((sg >> jj) & 1) == 1, -1.0, 1.0)
+    return (db * gb * sgn).reshape(n, k).astype(np.float32)
+
+
+HAND = {"IQ3_XXS": hand_iq3_xxs, "IQ2_S": hand_iq2_s}
 
 
 @pytest.mark.parametrize("qtype", list(HAND))
@@ -66,6 +91,14 @@ def test_iq3_xxs_registry():
     assert row_bytes("IQ3_XXS", 512) == 2 * 98
     with pytest.raises(ValueError):
         check_split("IQ3_XXS", 257)
+
+
+def test_iq2_s_registry():
+    t = TYPES["IQ2_S"]
+    assert (t.ggml_id, t.block, t.block_bytes) == (22, 256, 82)
+    assert row_bytes("IQ2_S", 512) == 2 * 82
+    with pytest.raises(ValueError):
+        check_split("IQ2_S", 257)
 
 
 def test_iq3_xxs_scale_in_range():
