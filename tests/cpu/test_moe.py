@@ -132,6 +132,20 @@ def test_host_pool_rows_and_pin_state():
     assert pool.buf.is_pinned() == (torch.xpu.device_count() > 0)
 
 
+def test_host_pool_accepts_2d_raw_fn():
+    # quant.testing.make_test_blocks returns [n, row_bytes]; expert_bytes
+    # flattens it, so fill keeps the pool view 2D (S15-1 crashed on GPU).
+    g = _group(n_experts=6)
+    rb = row_bytes(g.qtype, g.k)
+    flat_fn = g.raw_fn
+    g.raw_fn = lambda e: flat_fn(e).reshape(g.n, rb)
+    pool = HostPool(g, [0, 2])
+    pool.fill()
+    flat = pool.buf.view(2, g.slot_bytes)
+    for i, e in enumerate([0, 2]):
+        assert flat[i].numpy().tolist() == list(flat_fn(e))
+
+
 # ------------------------------------------------------------- routing / activation
 
 def test_route_weights_renormalize():

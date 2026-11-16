@@ -61,7 +61,7 @@ def test_full_residency_no_miss(tp):
         buf = st.bufs[0][name]
         n, k = (FFN, K) if name != "down" else (K, FFN)
         for e in range(N_EXPERTS):
-            want = torch.from_numpy(_raw(e, n, k, "Q8_0", tag))
+            want = torch.from_numpy(_raw(e, n, k, "Q8_0", tag)).to(buf.device)
             assert torch.equal(buf[e].reshape(-1), want), (name, e)
 
 
@@ -74,8 +74,10 @@ def test_zero_budget_lru_and_content(tp):
     s = st.stats()
     assert s["misses"] == 3 and s["bytes"] == 3 * _triple_bytes() and s["hits"] == 0
     buf = st.bufs[0]["gate"]
-    assert torch.equal(buf[0].reshape(-1), torch.from_numpy(_raw(2, FFN, K, "Q8_0", 1)))
-    assert torch.equal(buf[1].reshape(-1), torch.from_numpy(_raw(1, FFN, K, "Q8_0", 1)))
+    assert torch.equal(buf[0].reshape(-1),
+                       torch.from_numpy(_raw(2, FFN, K, "Q8_0", 1)).to(buf.device))
+    assert torch.equal(buf[1].reshape(-1),
+                       torch.from_numpy(_raw(1, FFN, K, "Q8_0", 1)).to(buf.device))
     assert st.resolve(0, [1]).tolist() == [1]  # swap hit refreshes LRU
     assert st.stats()["hits"] == 1
     st.reset_stats()
@@ -89,8 +91,9 @@ def test_partial_residency_hits_and_stats(tp):
     assert st.resolve(0, [1, 7]).tolist() == [1, 3]  # 1 resident, 7 -> swap slot 3
     assert st.resolve(0, [7, 1]).tolist() == [3, 1]  # both now loaded, no traffic
     assert st.stats() == {"hits": 3, "misses": 1, "bytes": _triple_bytes()}
-    assert torch.equal(st.bufs[0]["down"][3].reshape(-1),
-                       torch.from_numpy(_raw(7, K, FFN, "Q8_0", 3)))
+    buf = st.bufs[0]["down"]
+    assert torch.equal(buf[3].reshape(-1),
+                       torch.from_numpy(_raw(7, K, FFN, "Q8_0", 3)).to(buf.device))
 
 
 def test_too_many_fresh_misses_raises(tp):

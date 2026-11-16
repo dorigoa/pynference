@@ -1,0 +1,69 @@
+== start 19:59:00
+== moe_check exit 1 (19:59:16)
+bench/moe_check.py FAILED
+  host      : ubuntu
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 1930256) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-11-16_19:59:16
+  host      : ubuntu
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 1930255) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+        assert s["misses"] == 3 and s["bytes"] == 3 * _triple_bytes() and s["hits"] == 0
+        buf = st.bufs[0]["gate"]
+>       assert torch.equal(buf[0].reshape(-1), torch.from_numpy(_raw(2, FFN, K, "Q8_0", 1)))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       RuntimeError: Expected all tensors to be on the same device, but got other is on cpu, different from other tensors on xpu:0 (when checking argument in method wrapper_XPU__equal)
+
+tests/gpu/test_moe_store.py:77: RuntimeError
+____________________ test_partial_residency_hits_and_stats _____________________
+
+tp = <pynference.parallel.TP object at 0x79580e0db4d0>
+
+    def test_partial_residency_hits_and_stats(tp):
+        # 3 resident + 1 swap: 4 experts worth of budget
+        st = _store(tp, budget=4 * _triple_bytes(), swap=1)
+        assert st.maps[0].R == 3 and st.maps[0].S == 4
+        assert st.resolve(0, [1, 7]).tolist() == [1, 3]  # 1 resident, 7 -> swap slot 3
+        assert st.resolve(0, [7, 1]).tolist() == [3, 1]  # both now loaded, no traffic
+        assert st.stats() == {"hits": 3, "misses": 1, "bytes": _triple_bytes()}
+>       assert torch.equal(st.bufs[0]["down"][3].reshape(-1),
+                           torch.from_numpy(_raw(7, K, FFN, "Q8_0", 3)))
+E       RuntimeError: Expected all tensors to be on the same device, but got other is on cpu, different from other tensors on xpu:0 (when checking argument in method wrapper_XPU__equal)
+
+tests/gpu/test_moe_store.py:92: RuntimeError
+=========================== short test summary info ============================
+FAILED tests/gpu/test_moe_layer.py::test_zero_budget_batches_misses_and_matches_full
+FAILED tests/gpu/test_moe_layer.py::test_prefill_resolves_each_expert_once - ...
+FAILED tests/gpu/test_moe_store.py::test_full_residency_no_miss - RuntimeErro...
+FAILED tests/gpu/test_moe_store.py::test_zero_budget_lru_and_content - Runtim...
+FAILED tests/gpu/test_moe_store.py::test_partial_residency_hits_and_stats - R...
+5 failed, 102 passed, 1 skipped in 151.53s (0:02:31)
+== pytest gpu exit 1 (20:01:48)
+== regress exit 0 (20:03:57)
+== regress gemma4: ours --ref (graph) 20:01:48
+  loaded 50/60 layers (23s)
+  loaded 60/60 layers (30s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (20:02:41)
+== regress gemma4: ppl 20:02:41
+== ppl exit 0 (20:03:57)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 14.2s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 20:03:57

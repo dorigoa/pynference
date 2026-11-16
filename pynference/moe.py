@@ -61,7 +61,9 @@ class ExpertGroup:
         return self.n * row_bytes(self.qtype, self.k)
 
     def expert_bytes(self, e: int) -> np.ndarray:
-        raw = np.ascontiguousarray(self.raw_fn(e), dtype=np.uint8)
+        # raw_fn may return [n, row_bytes] (e.g. quant.testing.make_test_blocks):
+        # flatten so HostPool's [rows, slot_bytes] view stays 2D.
+        raw = np.ascontiguousarray(self.raw_fn(e), dtype=np.uint8).reshape(-1)
         if raw.size != self.slot_bytes:
             raise ValueError(
                 f"{self.name} expert {e}: got {raw.size} bytes, "
