@@ -182,7 +182,13 @@ def _decode(RAW8, RAWI, W16, off8, b, e, RB16,
         nib = (byte >> tl.where(e >= 16, 4, 0)) & 0x0F
         return _fp4kv(nib) * d
     off16 = off8 >> 1
-    d = tl.load(W16 + off16 + b * WPB).to(tl.float16, bitcast=True).to(tl.float32)
+    if MXFP4:
+        # Tracing only: MXFP4 returned above, but the Triton frontend keeps
+        # tracing past that constexpr return and would type-check this load.
+        # With odd row_bytes _views passes W16 as uint8: 8->16-bit bitcast fail.
+        d = 1.0
+    else:
+        d = tl.load(W16 + off16 + b * WPB).to(tl.float16, bitcast=True).to(tl.float32)
     if Q8_0:
         q = tl.load(RAWI + off8 + b * BB + QS + e).to(tl.float32)
         return q * d

@@ -1,0 +1,173 @@
+== start 11:04:21
+        if "_semantic" not in kwargs or kwargs["_semantic"] is None:
+            raise ValueError("Did you forget to add @triton.jit ? "
+                             "(`_semantic` argument must be provided outside of JIT functions.)")
+>       return fn(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^
+
+.venv/lib/python3.13/site-packages/triton/language/core.py:43: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.13/site-packages/triton/language/core.py:1147: in to
+    return cast(self, dtype, fp_downcast_rounding, bitcast, _semantic=_semantic)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/triton/language/core.py:43: in wrapper
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/triton/language/core.py:2210: in cast
+    return _semantic.bitcast(input, dtype)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <triton.language.semantic.TritonSemantic object at 0x74e79803c370>
+input = <triton.language.core.tensor object at 0x74e79804e2e0>
+dst_ty = <['32', '256'], fp16>
+
+    def bitcast(self, input: TensorTy, dst_ty: tl.dtype) -> TensorTy:
+        src_ty = input.type
+        if src_ty.is_block():
+            dst_ty = src_ty.with_element_ty(dst_ty.scalar)
+        if src_ty == dst_ty:
+            return input
+        src_sca_ty = src_ty.scalar
+        dst_sca_ty = dst_ty.scalar
+        if src_sca_ty.is_ptr() or dst_sca_ty.is_ptr():
+            return self.cast(input, dst_ty)
+        # Bitcast
+        src_bits = src_sca_ty.primitive_bitwidth
+        dst_bits = dst_sca_ty.primitive_bitwidth
+        if src_bits != dst_bits:
+>           raise ValueError("Cannot bitcast data-type of size " + str(src_bits) + " to "
+                             "data-type of size " + str(dst_bits))
+E           ValueError: Cannot bitcast data-type of size 8 to data-type of size 16
+
+.venv/lib/python3.13/site-packages/triton/language/semantic.py:803: ValueError
+
+The above exception was the direct cause of the following exception:
+triton.compiler.errors.CompilationError: at 21:8:
+        return _decode_k(RAW8, RAWI, W16, off8, b, e, KQ, BB, WPB, QS, QHB, DW, DMW, SCL, HMB)
+    if MXFP4:
+        # d = ggml_e8m0_to_fp32_half(e): bit-for-bit the gguf-py trick, i.e.
+        # 2**(e-128) for every e in 0..255 (e=0,1 are denormal mantissas)
+        eb = tl.load(RAW8 + off8 + b * BB).to(tl.uint32)
+        bits = tl.where(eb < 2, 0x00200000 << eb, (eb - 1) << 23)
+        d = bits.to(tl.float32, bitcast=True)
+        byte = tl.load(RAW8 + off8 + b * BB + QS + (e % 16)).to(tl.int32)
+        nib = (byte >> tl.where(e >= 16, 4, 0)) & 0x0F
+        return _fp4kv(nib) * d
+    off16 = off8 >> 1
+    d = tl.load(W16 + off16 + b * WPB).to(tl.float16, bitcast=True).to(tl.float32)
+        ^
+Cannot bitcast data-type of size 8 to data-type of size 16
+
+The above exception was the direct cause of the following exception:
+
+    def test_dequant_odd_rows_mxfp4():
+        """17 blocks per row -> row_bytes = 17*17 = 289, odd: no uint16 view path."""
+        n, k = 16, 544
+        raw = make_test_blocks("MXFP4", n, k, seed=9)
+        assert row_bytes("MXFP4", k) % 2 == 1
+        ref = torch.from_numpy(ref_dequant(raw, "MXFP4")).to(DEV)
+        w = _native("MXFP4", raw, n, k)
+        out = torch.empty(n, k, dtype=torch.float32, device=DEV)
+>       kernels.dequant_native("MXFP4", w.raw, out)
+
+tests/gpu/test_quant_s11.py:80: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pynference/quant/kernels.py:330: in dequant_native
+    _dequant_kernel[grid](w8, wi, w16, out, out, n, k, rb, rb // 2,
+.venv/lib/python3.13/site-packages/triton/runtime/jit.py:375: in <lambda>
+    return lambda *args, **kwargs: self.run(grid=grid, warmup=False, *args, **kwargs)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/triton/runtime/jit.py:765: in run
+    kernel = self._do_compile(key, signature, device, constexprs, options, attrs, warmup)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/triton/runtime/jit.py:917: in _do_compile
+    kernel = self.compile(src, target=target, options=options.__dict__)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.13/site-packages/triton/compiler/compiler.py:322: in compile
+    module = src.make_ir(target, options, codegen_fns, module_map, context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <triton.compiler.compiler.ASTSource object at 0x74e7980c39b0>
+target = GPUTarget(backend='xpu', arch={'architecture': 21483225088, 'device_id': 57891, 'driver_version': '1.15.39122', 'gpu_e...version': True, '__intel_already_queried_extensions__': True, 'core_clock_rate': 2800000, 'arch': 'bmg'}, warp_size=32)
+options = XPUOptions(num_warps=8, num_ctas=1, num_stages=2, cluster_dims=(1, 1, 1), warp_size=32, optimize_epilogue=False, enabl...ive_code=False, arch='', instrumentation_mode='', fpsan_homomorphic_casts=False, core_clock_rate=2800000, is_lts=False)
+codegen_fns = {'convert_custom_types': <function convert_custom_float8 at 0x74e7ca3a76a0>, 'min_dot_size': <function XPUBackend.min_dot_size.<locals>.get_min_dot_size at 0x74e797fc7740>}
+module_map = {'triton.language.extra.libdevice': <module 'triton.language.extra.intel.libdevice' from '/home/alvise/pynference/.venv/lib/python3.13/site-packages/triton/language/extra/intel/libdevice.py'>}
+context = <triton._C.libtriton.ir.context object at 0x74e798049b10>
+
+    def make_ir(self, target: GPUTarget, options, codegen_fns, module_map, context):
+        from .code_generator import ast_to_ttir
+>       return ast_to_ttir(self.fn, self, context=context, options=options, codegen_fns=codegen_fns,
+                           module_map=module_map)
+E       triton.compiler.errors.CompilationError: at 20:8:
+E           rn = tl.program_id(0) * BLOCK_N + tl.arange(0, BLOCK_N)
+E           rk = tl.program_id(1) * BLOCK_K + tl.arange(0, BLOCK_K)
+E           nm = rn < M
+E           if HAS_IDX:
+E               src = tl.load(IDX + rn, mask=nm, other=0).to(tl.int64)
+E           else:
+E               src = rn.to(tl.int64)
+E           src = tl.where(nm, src, 0)
+E           off8 = (src * RB8)[:, None]
+E           b = (rk // BS)[None, :]
+E           e = (rk % BS)[None, :]
+E           v = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, Q2_0, MXFP4,
+E               ^
+
+.venv/lib/python3.13/site-packages/triton/compiler/compiler.py:80: CompilationError
+=========================== short test summary info ============================
+FAILED tests/gpu/test_quant_s11.py::test_dequant_odd_rows_mxfp4 - triton.comp...
+1 failed, 14 passed in 78.93s (0:01:18)
+== pytest s11 exit 1 (11:05:40)
+self = <triton.compiler.compiler.ASTSource object at 0x7ec3e6888150>
+target = GPUTarget(backend='xpu', arch={'architecture': 21483225088, 'device_id': 57891, 'driver_version': '1.15.39122', 'gpu_e...version': True, '__intel_already_queried_extensions__': True, 'core_clock_rate': 2800000, 'arch': 'bmg'}, warp_size=32)
+options = XPUOptions(num_warps=8, num_ctas=1, num_stages=2, cluster_dims=(1, 1, 1), warp_size=32, optimize_epilogue=False, enabl...ive_code=False, arch='', instrumentation_mode='', fpsan_homomorphic_casts=False, core_clock_rate=2800000, is_lts=False)
+codegen_fns = {'convert_custom_types': <function convert_custom_float8 at 0x7ec484d14ea0>, 'min_dot_size': <function XPUBackend.min_dot_size.<locals>.get_min_dot_size at 0x7ec0295e5ee0>}
+module_map = {'triton.language.extra.libdevice': <module 'triton.language.extra.intel.libdevice' from '/home/alvise/pynference/.venv/lib/python3.13/site-packages/triton/language/extra/intel/libdevice.py'>}
+context = <triton._C.libtriton.ir.context object at 0x7ec3e6853690>
+
+    def make_ir(self, target: GPUTarget, options, codegen_fns, module_map, context):
+        from .code_generator import ast_to_ttir
+>       return ast_to_ttir(self.fn, self, context=context, options=options, codegen_fns=codegen_fns,
+                           module_map=module_map)
+E       triton.compiler.errors.CompilationError: at 20:8:
+E           rn = tl.program_id(0) * BLOCK_N + tl.arange(0, BLOCK_N)
+E           rk = tl.program_id(1) * BLOCK_K + tl.arange(0, BLOCK_K)
+E           nm = rn < M
+E           if HAS_IDX:
+E               src = tl.load(IDX + rn, mask=nm, other=0).to(tl.int64)
+E           else:
+E               src = rn.to(tl.int64)
+E           src = tl.where(nm, src, 0)
+E           off8 = (src * RB8)[:, None]
+E           b = (rk // BS)[None, :]
+E           e = (rk % BS)[None, :]
+E           v = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, Q2_0, MXFP4,
+E               ^
+
+.venv/lib/python3.13/site-packages/triton/compiler/compiler.py:80: CompilationError
+=========================== short test summary info ============================
+FAILED tests/gpu/test_quant_s11.py::test_dequant_odd_rows_mxfp4 - triton.comp...
+1 failed, 84 passed, 1 skipped in 316.51s (0:05:16)
+== pytest gpu exit 1 (11:10:58)
+== regress exit 0 (11:12:31)
+== regress gemma4: ours --ref (graph) 11:10:58
+  loaded 50/60 layers (23s)
+  loaded 60/60 layers (29s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (11:11:50)
+== regress gemma4: ppl 11:11:50
+== ppl exit 0 (11:12:30)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 12.2s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 11:12:31
