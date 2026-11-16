@@ -263,6 +263,8 @@ class GPTOss:
         self.store, self.moe = self._load_moe()
         torch.xpu.synchronize(dev)
         self.load_seconds = time.time() - t0
+        if tp.is_main:
+            print(f"  gpt-oss: load done in {self.load_seconds:.1f}s", flush=True)
 
     # ---- loading ----
     def _f32(self, name: str) -> torch.Tensor:
@@ -348,6 +350,7 @@ class GPTOss:
         kv = self.kv_bytes()
         scratch = 1 << 30   # bf16 dequant scratch (~50 MB) + prefill transients
         budget = max(int(D8_BUDGET_GB[tp.rank] * 1e9) - dense - kv - scratch, 0)
+        self._weights_bytes, self._scratch_bytes = dense, scratch   # for memory_report (C3)
         if tp.is_main:
             print(f"  MoE: {n_exp} experts x {c.n_layer} layers, budget "
                   f"{budget / 1e9:.2f} GB (dense {dense / 1e9:.2f}, kv {kv / 1e9:.2f}, "
@@ -455,8 +458,94 @@ class GPTOss:
             o = o + L.o_bias
         return tp.all_reduce(o)
 
+    # ---- full attention block, decode (T == 1) ----
+    def _layer_attn_decode(self, il: int, x: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
+        """Decode twin of _layer_attn: x [1, n_embd] -> [1, n_embd] float32."""
+        c, L, tp = self.cfg, self.layers[il], self.tp
+        Hq, Hkv, D = self.n_head_l, self.n_kv_l, c.head_dim
+        h = rms_norm(x, L.attn_norm, c.eps)
+        qkv = L.qkv(h)
+        b = L.qkv_bias
+        q = qkv[:, :Hq * D].view(1, Hq, D) + b[:Hq * D].view(Hq, D)
+        k = qkv[:, Hq * D:(Hq + Hkv) * D].view(1, Hkv, D) + b[Hq * D:(Hq + Hkv) * D].view(Hkv, D)
+        v = qkv[:, (Hq + Hkv) * D:].view(1, Hkv, D) + b[(Hq + Hkv) * D:].view(Hkv, D)
+        cos, sin = self.cos[pos], self.sin[pos]
+        q = rope_neox(q, cos, sin)
+        k = rope_neox(k, cos, sin)
+        a = self._attention_decode(il, q, k, v, pos)   # [Hq, D]
+        o = L.o(a.view(1, Hq * D))
+        if L.o_bias is not None:
+            o = o + L.o_bias
+        return tp.all_reduce(o)
+
     def embed_tokens(self, ids: torch.Tensor) -> torch.Tensor:
         """Embedding rows, [T] -> [T, n_embd] float32 (no sqrt scaling, openai-moe.cpp)."""
         local = (ids >= self.v0) & (ids < self.v1)
         rows = self.embed.rows_dequant((ids - self.v0).clamp(0, self.v1 - self.v0 - 1))
         return self.tp.all_reduce(rows * local[:, None])
+
+    def logits(self, x: torch.Tensor) -> torch.Tensor:
+        """Final RMSNorm + vocab-split output head gathered: [M, n_vocab] float32
+        on every rank. gpt-oss has no soft-cap (plan 3.8)."""
+        x = rms_norm(x, self.output_norm, self.cfg.eps)
+        return self.tp.all_gather(self.lm_head(x))
+
+    # ---- C3 driver ----
+    @torch.inference_mode()
+    def forward(self, tokens: list[int], chunk: int = 512, all_logits: bool = False) -> torch.Tensor:
+        """Append tokens to the context; return the logits of the last token
+        ([n_vocab]) or of every token ([len(tokens), n_vocab]).
+
+        Layer (openai-moe.cpp, plan 3.8): x += attn_block(x);
+        x += MoE(rms_norm(x, post_attn_norm)); the MoE sums local experts and
+        all-reduces (C5)."""
+        c, dev = self.cfg, self.tp.device
+        if self.n_past + len(tokens) > self.max_ctx:
+            raise ValueError(f"context full ({self.n_past} + {len(tokens)} > {self.max_ctx})")
+        if len(tokens) == 1 and not all_logits and self.fast_decode:
+            return self.decode(tokens[0])
+        outs = []
+        for s in range(0, len(tokens), chunk):
+            part = tokens[s:s + chunk]
+            pos0 = self.n_past
+            ids = torch.tensor(part, dtype=torch.long, device=dev)
+            pos = torch.arange(pos0, pos0 + len(part), dtype=torch.long, device=dev)
+            x = self.embed_tokens(ids)
+            for il in range(c.n_layer):
+                x = x + self._layer_attn(il, x, pos, pos0)
+                h = rms_norm(x, self.layers[il].post_attn_norm, c.eps)
+                x = x + self.moe[il].prefill(h)
+            self.n_past += len(part)
+            if all_logits:
+                outs.append(self.logits(x))
+        if all_logits:
+            return torch.cat(outs)
+        return self.logits(x[-1:])[0]
+
+    @torch.inference_mode()
+    def decode(self, token: int) -> torch.Tensor:
+        """One generated token: logits [n_vocab] float32 on every rank. No XPUGraph
+        yet (fast_decode uses the fused Triton attention kernel; the graph comes in S18)."""
+        c, dev = self.cfg, self.tp.device
+        if self.n_past >= self.max_ctx:
+            raise ValueError(f"context full ({self.n_past} >= {self.max_ctx})")
+        pos = torch.tensor([self.n_past], dtype=torch.long, device=dev)
+        x = self.embed_tokens(torch.tensor([token], dtype=torch.long, device=dev))
+        for il in range(c.n_layer):
+            x = x + self._layer_attn_decode(il, x, pos)
+            h = rms_norm(x, self.layers[il].post_attn_norm, c.eps)
+            x = x + self.moe[il].decode(h).view(1, -1)   # MoE.decode -> [k] summed
+        self.n_past += 1
+        return self.logits(x)[0]
+
+    def memory_report(self) -> dict:
+        """Bytes on this GPU (C3): dense weights (incl. router/biases and the rope
+        table), resident + swap experts, KV cache, scratch allowance; plus the
+        pinned host bytes of the non-resident experts."""
+        return {"weights": self._weights_bytes,
+                "experts": self.store.memory_bytes(),
+                "cache": self.kv_bytes(),
+                "scratch": self._scratch_bytes,
+                "pinned_host": self.store.pinned_bytes(),
+                "device_total": (self._weights_bytes + self.store.memory_bytes()
+                                 + self.kv_bytes() + self._scratch_bytes)}

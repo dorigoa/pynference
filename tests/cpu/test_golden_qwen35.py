@@ -6,9 +6,11 @@ files live only on the PC (/nvme), so these tests skip elsewhere. JSON files
 on disk escape the first char of special tokens as \\u003c (plan 2.1);
 json.load decodes them back.
 """
+import datetime
 import json
 import os
 import pathlib
+import re
 
 import pytest
 
@@ -107,6 +109,11 @@ def test_thinking_variants_differ(tok):
     assert think_end in ids_off and think_end not in ids_base
 
 
+# The harmony template embeds strftime_now (chat.py): the golden captured the date of
+# its capture day, so the ISO date is normalized out before the strict comparison.
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 @needs_both
 @pytest.mark.parametrize("case", OSS_TPL, ids=[c["name"] for c in OSS_TPL])
 def test_render_matches_llama_server_template_gpt_oss(case):
@@ -115,4 +122,6 @@ def test_render_matches_llama_server_template_gpt_oss(case):
         text = render(g, case["messages"], add_generation_prompt=True, **case["kwargs"])
     finally:
         g.close()
-    assert text == case["prompt"], f"case {case['name']}"
+    assert datetime.date.today().isoformat() in text      # strftime_now still live
+    assert _DATE_RE.sub("<date>", text) == _DATE_RE.sub("<date>", case["prompt"]), \
+        f"case {case['name']}"
