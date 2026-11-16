@@ -1,0 +1,56 @@
+== start 02:33:01
+RES Q4_0 deq=0.00e+00 deq_rows=0.00e+00
+.RES Q4_1 deq=0.00e+00 deq_rows=0.00e+00
+.RES Q5_0 deq=0.00e+00 deq_rows=0.00e+00
+.RES Q5_1 deq=0.00e+00 deq_rows=0.00e+00
+.RES IQ4_NL deq=0.00e+00 deq_rows=0.00e+00
+.RES Q8_0 deq=0.00e+00 deq_rows=0.00e+00
+.RES Q4_0 gemv=3.60e-07
+.RES Q4_1 gemv=6.95e-07
+.RES Q5_0 gemv=2.66e-07
+.RES Q5_1 gemv=2.95e-07
+.RES IQ4_NL gemv=2.61e-07
+.RES Q8_0 gemv=5.22e-07
+.RES Q4_0 gemv_idx=2.41e-07
+.RES Q4_1 gemv_idx=2.21e-07
+.RES Q5_0 gemv_idx=1.98e-07
+.RES Q5_1 gemv_idx=1.41e-07
+.RES IQ4_NL gemv_idx=1.73e-07
+.RES Q8_0 gemv_idx=2.01e-07
+.RES Q4_0 real token_embd.weight 256x5120 deq=0.00e+00 gemv=2.19e-07
+.RES Q5_0 real blk.0.ffn_down_exps.weight 256x640 deq=0.00e+00 gemv=1.50e-07
+.RES IQ4_NL real blk.7.ffn_down_exps.weight 256x640 deq=0.00e+00 gemv=2.54e-07
+.RES F16 gemv=4.03e-07
+.RES BF16 gemv=2.81e-07
+.RES Q4_0 gbps=239.1 (24.8 MB)
+.RES Q4_1 gbps=144.1 (27.5 MB)
+.RES Q5_0 gbps=146.4 (30.3 MB)
+.RES Q5_1 gbps=120.1 (33.0 MB)
+.RES IQ4_NL gbps=142.2 (24.8 MB)
+.RES Q8_0 gbps=531.1 (46.8 MB)
+.
+29 passed in 76.11s (0:01:16)
+== pytest block32 exit 0 (02:34:18)
+..............................................                           [100%]
+46 passed, 1 skipped in 38.19s
+== pytest gpu exit 0 (02:34:57)
+== regress exit 0 (02:36:43)
+== regress gemma4: ours --ref (graph) 02:34:57
+  loaded 50/60 layers (24s)
+  loaded 60/60 layers (30s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (02:35:50)
+== regress gemma4: ppl 02:35:50
+== ppl exit 0 (02:36:43)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 14.3s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 02:36:43
