@@ -31,16 +31,6 @@ CASES = json.loads((GOLDEN / "tokens.json").read_text(encoding="utf-8"))
 QWEN_TPL = json.loads((GOLDEN / "template.json").read_text(encoding="utf-8"))
 OSS_TPL = json.loads((GOLDEN_OSS / "template.json").read_text(encoding="utf-8"))
 
-# S14-1 sent "kwargs" to /apply-template, which llama-server ignores, so its
-# -thinking-0 rows may still be copies of the base until job S14-2 re-renders
-# them with a --reasoning-off server. These tests go live automatically once
-# the corrected golden lands.
-_by_name = {c["name"]: c for c in QWEN_TPL}
-THINK0_PENDING = any(
-    c["name"].endswith("-thinking-0")
-    and c["prompt"] == _by_name[c["name"].removesuffix("-thinking-0")]["prompt"]
-    for c in QWEN_TPL)
-
 
 @pytest.fixture(scope="module")
 def tok():
@@ -94,8 +84,6 @@ def test_render_matches_llama_server_template(case):
     # llama-server /apply-template does not prepend BOS (add_bos=False for
     # qwen35), and the Qwen template itself does not emit {{ bos_token }}:
     # the rendered prompt must match the golden verbatim.
-    if case["name"].endswith("-thinking-0") and THINK0_PENDING:
-        pytest.skip("thinking-0 golden still a placeholder (S14-2 pending)")
     g = GGUFFile(QWEN_MODEL)
     try:
         text = render(g, case["messages"], add_generation_prompt=True, **case["kwargs"])
@@ -106,8 +94,6 @@ def test_render_matches_llama_server_template(case):
 
 @needs_qwen
 def test_thinking_variants_differ(tok):
-    if THINK0_PENDING:
-        pytest.skip("thinking-0 golden still a placeholder (S14-2 pending)")
     base = next(c for c in QWEN_TPL if c["name"] == "chat-it")
     off = next(c for c in QWEN_TPL if c["name"] == "chat-it-thinking-0")
     assert base["prompt"] == next(c for c in QWEN_TPL if c["name"] == "chat-it-thinking-1")["prompt"]
