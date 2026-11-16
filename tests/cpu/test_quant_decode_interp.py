@@ -52,3 +52,50 @@ def test_dequant_kquant_interpreted():
         kernels.dequant_native(qtype, torch.from_numpy(np.ascontiguousarray(raw)), out)
         bad = ~np.isclose(out.numpy(), ref, rtol=1e-4, atol=0)
         assert not bad.any(), f"{qtype}: {bad.sum()}/{bad.size} wrong elements"
+
+
+def _views(t):
+    return t, t.view(torch.int8), t.view(torch.uint16)
+
+
+def test_gemv_interpreted_tail():
+    # BLOCK_K=512 with k<512 forces the clamped k-tail, n=3 with BLOCK_N=4
+    # forces masked rows: both must agree with the dequant reference
+    for qtype in TYPES + KTYPES:
+        k = 64 if qtype in TYPES else 256
+        n = 3
+        raw_np = make_test_blocks(qtype, n, k, seed=11)
+        ref = ref_dequant(raw_np, qtype)
+        x_np = np.linspace(-1.0, 1.0, k, dtype=np.float32)
+        rb = raw_np.shape[1]
+        w8, wi, w16 = _views(torch.from_numpy(np.ascontiguousarray(raw_np)))
+        y = torch.empty(1, n, dtype=torch.float32)
+        kernels._gemv_kernel.fn[(1,)](w8, wi, w16, torch.from_numpy(x_np), y,
+                                      n, k, rb, rb // 2,
+                                      BLOCK_N=4, BLOCK_K=512, num_warps=4,
+                                      **kernels._jit_args(qtype))
+        bad = ~np.isclose(y[0].numpy(), ref @ x_np, rtol=1e-4, atol=1e-6)
+        assert not bad.any(), f"{qtype} gemv tail: {bad.sum()}/{n} wrong rows"
+
+
+def test_gemv_indexed_interpreted_tail():
+    # same tail/row masking for the indexed kernel: slots [1, 0] on a stack
+    # of two experts, one python-loop row per expert to compare against
+    for qtype in TYPES + KTYPES:
+        k = 64 if qtype in TYPES else 256
+        n, e = 3, 2
+        raws = [make_test_blocks(qtype, n, k, seed=11 + s) for s in range(e)]
+        refs = [ref_dequant(r, qtype) for r in raws]
+        rb = raws[0].shape[1]
+        xs = np.stack([np.linspace(-1.0, 1.0, k, dtype=np.float32),
+                       np.linspace(1.0, -1.0, k, dtype=np.float32)])
+        stack = torch.from_numpy(np.ascontiguousarray(np.stack(raws))).reshape(e * n, rb)
+        w8, wi, w16 = _views(stack)
+        out = torch.empty(e, n, dtype=torch.float32)
+        kernels._gemv_indexed_kernel.fn[(e, 1)](
+            w8, wi, w16, torch.from_numpy(xs), torch.tensor([1, 0], dtype=torch.int32),
+            out, n, k, rb, rb // 2, n * rb,
+            BLOCK_N=4, BLOCK_K=512, num_warps=4, **kernels._jit_args(qtype))
+        want = np.stack([refs[1] @ xs[0], refs[0] @ xs[1]])
+        bad = ~np.isclose(out.numpy(), want, rtol=1e-4, atol=1e-6)
+        assert not bad.any(), f"{qtype} gemv idx tail: {bad.sum()}/{want.size} wrong"

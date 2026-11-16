@@ -1,0 +1,108 @@
+== start 03:42:14
+RES Q2_K deq=0.00e+00 deq_rows=0.00e+00
+.RES Q3_K deq=0.00e+00 deq_rows=0.00e+00
+.RES Q4_K deq=0.00e+00 deq_rows=0.00e+00
+.RES Q5_K deq=0.00e+00 deq_rows=0.00e+00
+.RES Q6_K deq=0.00e+00 deq_rows=0.00e+00
+.RES Q2_K gemv=3.54e-07
+.RES Q3_K gemv=3.39e-07
+.RES Q4_K gemv=4.19e-07
+.RES Q5_K gemv=4.04e-07
+.RES Q6_K gemv=3.50e-07
+.RES Q2_K gemv_idx=1.59e-07
+.RES Q3_K gemv_idx=2.00e-07
+.RES Q4_K gemv_idx=1.80e-07
+.RES Q5_K gemv_idx=1.38e-07
+.RES Q6_K gemv_idx=2.49e-07
+.RES Q3_K real blk.0.ffn_up.weight 256x5120 deq=0.00e+00 gemv=3.02e-07
+.RES Q4_K real blk.1.attn_gate.weight 256x5120 deq=0.00e+00 gemv=1.61e-07
+.RES Q5_K real blk.0.attn_gate.weight 256x5120 deq=0.00e+00 gemv=2.47e-07
+.RES Q6_K real blk.0.attn_gate.weight 256x2560 deq=0.00e+00 gemv=6.62e-07
+.RES Q2_K gbps=98.8 (14.5 MB)
+FRES Q3_K gbps=103.3 (18.9 MB)
+.RES Q4_K gbps=117.9 (24.8 MB)
+.RES Q5_K gbps=123.8 (30.3 MB)
+.RES Q6_K gbps=179.7 (36.1 MB)
+.
+=================================== FAILURES ===================================
+_____________________________ test_bandwidth[Q2_K] _____________________________
+
+qtype = 'Q2_K'
+
+    @pytest.mark.parametrize("qtype", KTYPES)
+    def test_bandwidth(qtype):
+        import time
+        n, k = 8192, 5376
+        raw = make_test_blocks(qtype, n, k, seed=5)
+        w = _native(qtype, raw, n, k)
+        x = torch.randn(k, device=DEV)
+        y = torch.empty(1, n, dtype=torch.float32, device=DEV)
+        for _ in range(3):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        it = 20
+        t = time.perf_counter()
+        for _ in range(it):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        gbps = w.nbytes / ((time.perf_counter() - t) / it) / 1e9
+        print(f"RES {qtype} gbps={gbps:.1f} ({w.nbytes / 1e6:.1f} MB)")
+>       assert gbps > MIN_GBPS
+E       assert 98.78937855456589 > 100.0
+
+tests/gpu/test_quant_kquant.py:136: AssertionError
+=========================== short test summary info ============================
+FAILED tests/gpu/test_quant_kquant.py::test_bandwidth[Q2_K] - assert 98.78937...
+1 failed, 23 passed in 143.65s (0:02:23)
+== pytest kquant exit 1 (03:44:38)
+
+qtype = 'Q2_K'
+
+    @pytest.mark.parametrize("qtype", KTYPES)
+    def test_bandwidth(qtype):
+        import time
+        n, k = 8192, 5376
+        raw = make_test_blocks(qtype, n, k, seed=5)
+        w = _native(qtype, raw, n, k)
+        x = torch.randn(k, device=DEV)
+        y = torch.empty(1, n, dtype=torch.float32, device=DEV)
+        for _ in range(3):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        it = 20
+        t = time.perf_counter()
+        for _ in range(it):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        gbps = w.nbytes / ((time.perf_counter() - t) / it) / 1e9
+        print(f"RES {qtype} gbps={gbps:.1f} ({w.nbytes / 1e6:.1f} MB)")
+>       assert gbps > MIN_GBPS
+E       assert 97.97953440553871 > 100.0
+
+tests/gpu/test_quant_kquant.py:136: AssertionError
+----------------------------- Captured stdout call -----------------------------
+RES Q2_K gbps=98.0 (14.5 MB)
+=========================== short test summary info ============================
+FAILED tests/gpu/test_quant_kquant.py::test_bandwidth[Q2_K] - assert 97.97953...
+1 failed, 69 passed, 1 skipped in 179.28s (0:02:59)
+== pytest gpu exit 1 (03:47:38)
+== regress exit 0 (03:49:30)
+== regress gemma4: ours --ref (graph) 03:47:38
+  loaded 50/60 layers (22s)
+  loaded 60/60 layers (28s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (03:48:29)
+== regress gemma4: ppl 03:48:29
+== ppl exit 0 (03:49:29)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 11.9s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 03:49:30
