@@ -1,0 +1,153 @@
+== start 22:50:22
+dump: 49780 lines in results/jobs/S16-2/dump.txt
+== dump exit 0 (22:51:03)
+common_debug_cb_eval:               attn_out-0 = (f32)        ADD(node_29{2880, 5, 1, 1}, blk.0.attn_output.bias{2880, 1, 1, 1}}) = {2880, 5, 1, 1}
+0.28.208.200 I number of input tokens = 5
+== attn0 pytest exit 1 (22:51:11)
+E           rank      : 0 (local_rank: 0)
+E           exitcode  : 1 (pid: 2162750) 
+E           error_file: <N/A>
+E           traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+E         ============================================================
+E         
+E       assert 'RES cos_attn0=' in '  loaded 10/36 layers (1s)\n  loaded 20/36 layers (1s)\n  loaded 30/36 layers (1s)\ncfg: n_embd=2880 heads=64/8 D=64 ...e: https://pytorch.org/docs/stable/elastic/errors.html\n============================================================\n'
+
+tests/gpu/test_gptoss_attn0.py:34: AssertionError
+=========================== short test summary info ============================
+FAILED tests/gpu/test_gptoss_attn0.py::test_gptoss_attn0_layer0 - AssertionEr...
+1 failed in 7.27s
+=================================== FAILURES ===================================
+>       assert "RES cos_attn0=" in out, out[-4000:]
+E       assert 'RES cos_attn0=' in '  loaded 10/36 layers (1s)\n  loaded 20/36 layers (1s)\n  loaded 30/36 layers (1s)\ncfg: n_embd=2880 heads=64/8 D=64 ...e: https://pytorch.org/docs/stable/elastic/errors.html\n============================================================\n'
+E       AssertionError:  needed. 
+E         *****************************************
+E         [rank0]: Traceback (most recent call last):
+E         [rank0]:   File "/home/alvise/pynference/tests/gpu/_gptoss_attn0_worker.py", line 189, in <module>
+E         [rank0]:     main()
+E         [rank0]:     ~~~~^^
+E         [rank0]:   File "/home/alvise/pynference/tests/gpu/_gptoss_attn0_worker.py", line 144, in main
+E         [rank0]:     ids, ne, dump = parse_dump(DUMP)
+E         [rank0]:                     ~~~~~~~~~~^^^^^^
+E         [rank0]:   File "/home/alvise/pynference/tests/gpu/_gptoss_attn0_worker.py", line 42, in parse_dump
+E         [rank0]:     ids = [int(lines[i + 1 + j].strip()) for j in range(n)]
+E         [rank0]:            ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         [rank0]: ValueError: invalid literal for int() with base 10: '0.28.208.203 I   976'
+E         [rank1]: Traceback (most recent call last):
+E         [rank1]:   File "/home/alvise/pynference/tests/gpu/_gptoss_attn0_worker.py", line 189, in <module>
+E         [rank1]:     main()
+E         [rank1]:     ~~~~^^
+E         [rank1]:   File "/home/alvise/pynference/tests/gpu/_gptoss_attn0_worker.py", line 144, in main
+E         [rank1]:     ids, ne, dump = parse_dump(DUMP)
+E         [rank1]:                     ~~~~~~~~~~^^^^^^
+E         [rank1]:   File "/home/alvise/pynference/tests/gpu/_gptoss_attn0_worker.py", line 42, in parse_dump
+E         [rank1]:     ids = [int(lines[i + 1 + j].strip()) for j in range(n)]
+E         [rank1]:            ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
+E         [rank1]: ValueError: invalid literal for int() with base 10: '0.28.208.203 I   976'
+E         W1116 22:51:10.623000 2162657 .venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/api.py:1028] Sending process 2162751 closing signal SIGTERM
+E         E1116 22:51:10.655000 2162657 .venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/api.py:1002] failed (exitcode: 1) local_rank: 0 (pid: 2162750) of binary: /home/alvise/pynference/.venv/bin/python
+E         Traceback (most recent call last):
+E           File "<frozen runpy>", line 198, in _run_module_as_main
+E           File "<frozen runpy>", line 88, in _run_code
+E           File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/run.py", line 1142, in <module>
+E             main()
+E             ~~~~^^
+E           File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 384, in wrapper
+E             result = f(*args, **kwargs)
+E           File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/run.py", line 1138, in main
+E             run(args)
+E             ~~~^^^^^^
+E           File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/run.py", line 1129, in run
+E             elastic_launch(
+E             ~~~~~~~~~~~~~~~
+== pytest gpu exit 1 (22:54:01)
+tests/gpu/test_quant_s11.py:154: AssertionError
+----------------------------- Captured stdout call -----------------------------
+RES Q2_0 gbps=81.7 (12.4 MB)
+=========================== short test summary info ============================
+FAILED tests/gpu/test_gptoss_attn0.py::test_gptoss_attn0_layer0 - AssertionEr...
+FAILED tests/gpu/test_quant_s11.py::test_bandwidth[MXFP4] - assert 104.535338...
+FAILED tests/gpu/test_quant_s11.py::test_bandwidth[Q2_0] - assert 81.72045479...
+3 failed, 105 passed, 1 skipped in 166.41s (0:02:46)
+FAILED tests/gpu/test_gptoss_attn0.py::test_gptoss_attn0_layer0 - AssertionEr...
+FAILED tests/gpu/test_quant_s11.py::test_bandwidth[MXFP4] - assert 104.535338...
+FAILED tests/gpu/test_quant_s11.py::test_bandwidth[Q2_0] - assert 81.72045479...
+E       AssertionError: gy recognition shows PCIe connection between devices. If this is not correct, you can disable topology recognition, with CCL_TOPO_FABRIC_VERTEX_CONNECTION_CHECK=0. This will assume XeLinks across devices
+E         RES cos_attn0=0.9999955 maxrel_sum_ranks=4.507e-03 T=3
+E         
+E         
+E         *****************************************
+E         Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+E         *****************************************
+E         [rank0]: Traceback (most recent call last):
+E         [rank0]:   File "/home/alvise/pynference/tests/gpu/_gptoss_attn0_worker.py", line 189, in <module>
+E         [rank0]:     main()
+E         [rank0]:     ~~~~^^
+E         [rank0]:   File "/home/alvise/pynference/tests/gpu/_gptoss_attn0_worker.py", line 170, in main
+E         [rank0]:     assert ok, f"attn_out-0 vs reference: cos={cos:.7f} tol={COS_TOL} maxrel_sum={err.item():.3e}"
+E         [rank0]:            ^^
+E         [rank0]: AssertionError: attn_out-0 vs reference: cos=0.9999955 tol=0.9999 maxrel_sum=4.507e-03
+E         [rank1]: Traceback (most recent call last):
+E         [rank1]:   File "/home/alvise/pynference/tests/gpu/_gptoss_attn0_worker.py", line 189, in <module>
+E         [rank1]:     main()
+E         [rank1]:     ~~~~^^
+E         [rank1]:   File "/home/alvise/pynference/tests/gpu/_gptoss_attn0_worker.py", line 170, in main
+E         [rank1]:     assert ok, f"attn_out-0 vs reference: cos={cos:.7f} tol={COS_TOL} maxrel_sum={err.item():.3e}"
+E         [rank1]:            ^^
+E         [rank1]: AssertionError: attn_out-0 vs reference: cos=0.9999955 tol=0.9999 maxrel_sum=4.507e-03
+E         E1116 22:51:21.403000 2163053 .venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/api.py:1002] failed (exitcode: 1) local_rank: 0 (pid: 2163078) of binary: /home/alvise/pynference/.venv/bin/python
+E         Traceback (most recent call last):
+E           File "<frozen runpy>", line 198, in _run_module_as_main
+E           File "<frozen runpy>", line 88, in _run_code
+E           File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/run.py", line 1142, in <module>
+E             main()
+E             ~~~~^^
+E           File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 384, in wrapper
+E             result = f(*args, **kwargs)
+E           File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/run.py", line 1138, in main
+E             run(args)
+E             ~~~^^^^^^
+E           File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/run.py", line 1129, in run
+E             elastic_launch(
+E             ~~~~~~~~~~~~~~~
+E                 config=config,
+E                 ~~~~~~~~~~~~~~
+E                 entrypoint=cmd,
+E                 ~~~~~~~~~~~~~~~
+E             )(*cmd_args)
+E             ~^^^^^^^^^^^
+E           File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/launcher/api.py", line 197, in __call__
+E             return launch_agent(
+E                 self._config,
+E             ...<2 lines>...
+E                 health_check_server=self._health_check_server,
+E             )
+E           File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/launcher/api.py", line 386, in launch_agent
+E             raise ChildFailedError(
+E             ...<2 lines>...
+E             )
+E         torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+E         ============================================================
+E         /home/alvise/pynference/tests/gpu/_gptoss_attn0_worker.py FAILED
+E         ------------------------------------------------------------
+E         Failures:
+E         [1]:
+== regress exit 0 (22:55:47)
+== regress gemma4: ours --ref (graph) 22:54:01
+  loaded 50/60 layers (21s)
+  loaded 60/60 layers (27s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (22:54:51)
+== regress gemma4: ppl 22:54:51
+== ppl exit 0 (22:55:47)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 17.7s)
+chat-it: max |dp| 1.95e-06 over top-10
+chat-en: max |dp| 5.65e-07 over top-10
+code: max |dp| 1.21e-05 over top-10
+raw: max |dp| 5.51e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 22:55:47
