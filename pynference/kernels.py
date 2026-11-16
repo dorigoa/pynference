@@ -182,7 +182,8 @@ def _attn_decode_k(Q, K, V, NLEN, PM, PL, PO, S, D, G, SPLIT,
 
 
 @triton.jit
-def _attn_combine_k(PM, PL, PO, O, NSP, D, BLOCK_SP: tl.constexpr, BLOCK_D: tl.constexpr):
+def _attn_combine_k(PM, PL, PO, SINKS, O, NSP, D, BLOCK_SP: tl.constexpr, BLOCK_D: tl.constexpr,
+                    HAS_SINK: tl.constexpr):
     hq = tl.program_id(0)
     sp = tl.arange(0, BLOCK_SP)
     spm = sp < NSP
@@ -191,16 +192,24 @@ def _attn_combine_k(PM, PL, PO, O, NSP, D, BLOCK_SP: tl.constexpr, BLOCK_D: tl.c
     m = tl.load(PM + hq * NSP + sp, mask=spm, other=-float("inf"))
     l = tl.load(PL + hq * NSP + sp, mask=spm, other=0.0)
     mx = tl.max(m, 0)
+    if HAS_SINK:
+        sink = tl.load(SINKS + hq)
+        mx = tl.maximum(mx, sink)
     w = tl.where(spm & (m > -float("inf")), tl.exp(m - mx), 0.0)
     o = tl.load(PO + (hq * NSP + sp)[:, None] * D + d[None, :], mask=spm[:, None] & dm[None, :], other=0.0)
-    out = tl.sum(w[:, None] * o, axis=0) / tl.sum(w * l, 0)
+    den = tl.sum(w * l, 0)
+    if HAS_SINK:
+        den = den + tl.exp(sink - mx)
+    out = tl.sum(w[:, None] * o, axis=0) / den
     tl.store(O + hq * D + d, out, mask=dm)
 
 
 def attn_decode(q: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, n_len: torch.Tensor,
-                n_split: int, split: int, out: torch.Tensor | None = None, ws=None) -> torch.Tensor:
+                n_split: int, split: int, out: torch.Tensor | None = None, ws=None,
+                sinks: torch.Tensor | None = None) -> torch.Tensor:
     """q [Hq, D]; caches [Hkv, S, D]; n_len int tensor [1] = number of valid keys (slots 0..n-1).
-    n_split * split must cover the largest n. Returns [Hq, D] float32."""
+    n_split * split must cover the largest n. sinks [Hq] (or None): softmax sinks per query head,
+    added to the denominator only, as gpt-oss does (S16 map S3). Returns [Hq, D] float32."""
     Hq, D = q.shape
     Hkv, S, _ = k_cache.shape
     dev = q.device
@@ -212,8 +221,9 @@ def attn_decode(q: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, n
     bs = 16 if D >= 512 else 32
     _attn_decode_k[(Hq, n_split)](q, k_cache, v_cache, n_len, pm, pl, po, S, D, Hq // Hkv, split,
                                   BLOCK_S=bs, BLOCK_D=_np2(D), num_warps=4)
-    _attn_combine_k[(Hq,)](pm, pl, po, out, n_split, D, BLOCK_SP=max(_np2(n_split), 2),
-                           BLOCK_D=_np2(D), num_warps=4)
+    _attn_combine_k[(Hq,)](pm, pl, po, sinks if sinks is not None else q, out, n_split, D,
+                           BLOCK_SP=max(_np2(n_split), 2), BLOCK_D=_np2(D), num_warps=4,
+                           HAS_SINK=sinks is not None)
     return out
 
 
@@ -267,6 +277,12 @@ def _selftest():
         nsp = triton.cdiv(S, split)
         o = attn_decode(q, kc, vc, torch.tensor([n], device=dev, dtype=torch.int32), nsp, split)
         print(f"attn_decode Hq={Hq} Hkv={Hkv} D={D} n={n}: {(o - ref).abs().max().item():.2e}")
+        sk = torch.randn(Hq, device=dev) * 2.0
+        m2 = torch.maximum(sc.max(-1, keepdim=True).values, sk.view(Hkv, G, 1))
+        p2 = (sc - m2).exp()
+        ref2 = (p2 @ vc[:, :n].float()) / (p2.sum(-1, keepdim=True) + (sk.view(Hkv, G, 1) - m2).exp())
+        o2 = attn_decode(q, kc, vc, torch.tensor([n], device=dev, dtype=torch.int32), nsp, split, sinks=sk)
+        print(f"attn_decode+sinks Hq={Hq} Hkv={Hkv} D={D} n={n}: {(o2 - ref2.reshape(Hq, D)).abs().max().item():.2e}")
 
 
 if __name__ == "__main__":

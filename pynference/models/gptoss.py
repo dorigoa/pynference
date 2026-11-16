@@ -120,6 +120,53 @@ def rope_yarn_table(n_rot: int, base: float, factor: float, orig_ctx: int,
             torch.from_numpy((mscale * np.sin(ang)).astype(np.float32)).to(device))
 
 
+def rms_norm(x: torch.Tensor, w: torch.Tensor, eps: float) -> torch.Tensor:
+    return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps) * w
+
+
+def rope_neox(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+    """x [T, H, D]; cos/sin [T, R/2]. NEOX: rotates pairs (i, i + R/2) of the first R dims."""
+    half = cos.shape[-1]
+    x1, x2 = x[..., :half], x[..., half:2 * half]
+    c, s = cos[:, None, :], sin[:, None, :]
+    rot = torch.cat([x1 * c - x2 * s, x2 * c + x1 * s], dim=-1)
+    return rot if 2 * half == x.shape[-1] else torch.cat([rot, x[..., 2 * half:]], dim=-1)
+
+
+def attn_prefill(q, kcache, vcache, kp, pos, window, scale, sinks=None):
+    """One attention op over cached keys (torch, prefill and reference path).
+
+    q [T, Hq, D] float32; kcache/vcache [Hkv, S, D] already containing the current tokens,
+    with key positions kp [S] (negative = empty slot); pos [T] query positions.
+    window 0 = dense (causal only), > 0 = sliding window: key visible iff 0 <= pos - kp < window
+    (llama-graph.cpp:583-604 calls is_masked_swa with p1 = the query's own position).
+    scale multiplies the scores (gpt-oss: 1/sqrt(head_dim)); sinks [Hq] or None enter only the
+    softmax denominator, per query head h = kv*(Hq//Hkv) + g (S16 map S3).
+    Returns [T, Hq*D] float32."""
+    T, Hq, D = q.shape
+    Hkv, S, _ = kcache.shape
+    G = Hq // Hkv
+    qh = q.view(T, Hkv, G, D).permute(1, 2, 0, 3).reshape(Hkv, G * T, D)
+    s = (qh @ kcache.float().transpose(1, 2)).view(Hkv, G, T, S) * scale
+    d = pos[:, None] - kp[None, :]
+    vis = (kp[None, :] >= 0) & (d >= 0)
+    if window:
+        vis &= d < window
+    s = s.masked_fill(~vis[None, None], float("-inf"))
+    if sinks is None:
+        m = s.amax(-1, keepdim=True)
+        p = (s - m).exp()
+        den = p.sum(-1, keepdim=True)
+    else:
+        sk = sinks.view(Hkv, G, 1, 1)
+        m = torch.maximum(s.amax(-1, keepdim=True), sk)
+        p = (s - m).exp()
+        den = p.sum(-1, keepdim=True) + (sk - m).exp()
+    o = (torch.matmul(p.view(Hkv, G * T, S), vcache.float())
+         .view(Hkv, G, T, D) / den).permute(2, 0, 1, 3).reshape(T, Hq * D)
+    return o
+
+
 class _Layer:
     pass
 
@@ -133,6 +180,11 @@ class GPTOss:
             raise ValueError(f"heads not divisible by {tp.world} GPUs")
         self.n_head_l = c.n_head // tp.world
         self.n_kv_l = c.n_head_kv // tp.world
+        self._scale = 1.0 / math.sqrt(c.head_dim)          # build_attn scale 1/sqrt(n_rot)
+        self._split_swa = c.window
+        self._nsp_swa = (c.window + self._split_swa - 1) // self._split_swa
+        self._split_full = max(256, ((max_ctx + 63) // 64 + 15) // 16 * 16)
+        self._nsp_full = (max_ctx + self._split_full - 1) // self._split_full
         t0 = time.time()
 
         self.v0, self.v1 = tp.split(c.n_vocab)
@@ -204,3 +256,98 @@ class GPTOss:
         L.attn_norm = self._f32(p + "attn_norm.weight")
         L.post_attn_norm = self._f32(p + "post_attention_norm.weight")
         return L
+
+    # ---- KV cache ----
+    def reset(self):
+        """Allocate (or clear) the KV cache: a ring buffer of `window` slots for sliding
+        layers (position p in slot p % window), max_ctx slots for full-attention layers."""
+        c, dev = self.cfg, self.tp.device
+        self.n_past = 0
+        if getattr(self, "cache", None):
+            return
+        self.cache = []
+        for L in self.layers:
+            n = c.window if L.swa else self.max_ctx
+            k = torch.zeros(self.n_kv_l, n, c.head_dim, dtype=self.kv_dtype, device=dev)
+            self.cache.append((k, torch.zeros_like(k)))
+
+    def kv_bytes(self) -> int:
+        return sum(k.numel() * k.element_size() * 2 for k, _ in self.cache)
+
+    # ---- prompt (T > 1) path ----
+    def _attention(self, il: int, q, k, v, pos: torch.Tensor, pos0: int) -> torch.Tensor:
+        """q [T, Hq, D]; k, v [T, Hkv, D], already roped. Stores k/v in the cache and runs
+        attn_prefill (sinks + window + scale). Returns [T, Hq*D] float32."""
+        L = self.layers[il]
+        kc, vc = self.cache[il]
+        T = q.shape[0]
+        if L.swa:
+            W = self.cfg.window
+            # slot j holds the latest position < pos0 that is == j (mod W), if any
+            j = torch.arange(W, device=q.device)
+            kp = (pos0 - 1) - torch.remainder(pos0 - 1 - j, W)
+            kcache = torch.cat([kc, k.transpose(0, 1).to(kc.dtype)], dim=1)
+            vcache = torch.cat([vc, v.transpose(0, 1).to(vc.dtype)], dim=1)
+            kp = torch.cat([kp, pos])
+            n = min(T, W)
+            slots = pos[T - n:] % W
+            kc[:, slots] = k[T - n:].transpose(0, 1).to(kc.dtype)
+            vc[:, slots] = v[T - n:].transpose(0, 1).to(vc.dtype)
+            window = W
+        else:
+            kc[:, pos0:pos0 + T] = k.transpose(0, 1).to(kc.dtype)
+            vc[:, pos0:pos0 + T] = v.transpose(0, 1).to(vc.dtype)
+            kcache, vcache = kc[:, :pos0 + T], vc[:, :pos0 + T]
+            kp = torch.arange(pos0 + T, device=q.device)
+            window = 0
+        return attn_prefill(q, kcache, vcache, kp, pos, window, self._scale, L.sinks)
+
+    # ---- decode (one token) path ----
+    def _attention_decode(self, il: int, q, k, v, pos: torch.Tensor) -> torch.Tensor:
+        """q [1, Hq, D]; k, v [1, Hkv, D], already roped; pos int tensor [1] = absolute
+        position. Stores k/v in the cache and runs kernels.attn_decode with this layer's
+        sinks. Returns [Hq, D] float32 (gpt-oss has no q/k/v norms)."""
+        from .. import kernels as K   # Triton at call time only: see the module header note
+        c, L = self.cfg, self.layers[il]
+        kc, vc = self.cache[il]
+        Hq, D = q.shape[1], q.shape[2]
+        if L.swa:
+            slot = torch.remainder(pos, c.window)
+            n_len = torch.clamp(pos + 1, max=c.window)
+            split, nsp = self._split_swa, self._nsp_swa
+        else:
+            slot, n_len = pos, pos + 1
+            split, nsp = self._split_full, self._nsp_full
+        kc.index_copy_(1, slot, k.transpose(0, 1).to(kc.dtype))
+        vc.index_copy_(1, slot, v.transpose(0, 1).to(vc.dtype))
+        return K.attn_decode(q.reshape(Hq, D), kc, vc, n_len, nsp, split, sinks=L.sinks)
+
+    # ---- full attention block = the llama.cpp "attn_out" (openai-moe.cpp:100-103) ----
+    def _layer_attn(self, il: int, x: torch.Tensor, pos: torch.Tensor, pos0: int) -> torch.Tensor:
+        """RMSNorm, QKV + biases after the projection, RoPE, attention with sinks/window,
+        O + bias (rank 0), all-reduce. x [T, n_embd] float32 -> [T, n_embd] float32."""
+        c, L, tp = self.cfg, self.layers[il], self.tp
+        T, Hq, Hkv, D = x.shape[0], self.n_head_l, self.n_kv_l, c.head_dim
+        h = rms_norm(x, L.attn_norm, c.eps)
+        qkv = L.qkv(h)
+        b = L.qkv_bias
+        qb = b[:Hq * D].view(Hq, D)
+        kb = b[Hq * D:Hq * D + Hkv * D].view(Hkv, D)
+        vb = b[Hq * D + Hkv * D:].view(Hkv, D)
+        q = qkv[:, :Hq * D].view(T, Hq, D) + qb
+        k = qkv[:, Hq * D:(Hq + Hkv) * D].view(T, Hkv, D) + kb
+        v = qkv[:, (Hq + Hkv) * D:].view(T, Hkv, D) + vb
+        cos, sin = self.cos[pos], self.sin[pos]
+        q = rope_neox(q, cos, sin)
+        k = rope_neox(k, cos, sin)
+        a = self._attention(il, q, k, v, pos, pos0)
+        o = L.o(a)
+        if L.o_bias is not None:
+            o = o + L.o_bias
+        return tp.all_reduce(o)
+
+    def embed_tokens(self, ids: torch.Tensor) -> torch.Tensor:
+        """Embedding rows, [T] -> [T, n_embd] float32 (no sqrt scaling, openai-moe.cpp)."""
+        local = (ids >= self.v0) & (ids < self.v1)
+        rows = self.embed.rows_dequant((ids - self.v0).clamp(0, self.v1 - self.v0 - 1))
+        return self.tp.all_reduce(rows * local[:, None])
