@@ -1,0 +1,36 @@
+== start 23:16:36
+== pytest gpu exit 0 (23:19:18)
+.RES IQ3_XXS gemv_idx=1.93e-07
+.RES IQ2_S gemv_idx=1.76e-07
+.RES IQ3_XXS real blk.0.ffn_up_exps.weight 256x2560 deq=0.00e+00 gemv=4.23e-07
+.RES IQ2_S real blk.8.ffn_up_exps.weight 256x2560 deq=0.00e+00 gemv=3.42e-07
+.RES IQ3_XXS gbps=66.2 (16.9 MB)
+.RES IQ2_S gbps=59.3 (14.1 MB)
+.
+108 passed, 1 skipped in 161.44s (0:02:41)
+.RES Q4_0 gbps=244.6 (24.8 MB)
+.RES Q4_1 gbps=144.0 (27.5 MB)
+.RES Q5_0 gbps=146.0 (30.3 MB)
+.RES Q5_1 gbps=119.6 (33.0 MB)
+.RES IQ4_NL gbps=139.1 (24.8 MB)
+.RES Q8_0 gbps=521.3 (46.8 MB)
+dump: 49780 lines in results/jobs/S16-3/dump.txt
+== dump exit 0 (23:20:01)
+common_debug_cb_eval:               attn_out-0 = (f32)        ADD(node_29{2880, 5, 1, 1}, blk.0.attn_output.bias{2880, 1, 1, 1}}) = {2880, 5, 1, 1}
+== attn0 pytest exit 0 (23:20:13)
+.                                                                        [100%]
+1 passed in 11.70s
+== regress exit 0 (23:21:59)
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (23:21:02)
+== regress gemma4: ppl 23:21:02
+== ppl exit 0 (23:21:59)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 17.5s)
+chat-it: max |dp| 1.95e-06 over top-10
+chat-en: max |dp| 5.65e-07 over top-10
+code: max |dp| 1.21e-05 over top-10
+raw: max |dp| 5.51e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 23:21:59
