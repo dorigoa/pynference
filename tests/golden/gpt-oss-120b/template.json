@@ -1,0 +1,24 @@
+[
+ {
+  "name": "chat-it",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Qual è la capitale d'Italia? Rispondi in una frase."
+   }
+  ],
+  "kwargs": {},
+  "prompt": "\u003c|start|>system\u003c|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-11-16\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\u003c|end|>\u003c|start|>user\u003c|message|>Qual è la capitale d'Italia? Rispondi in una frase.\u003c|end|>\u003c|start|>assistant"
+ },
+ {
+  "name": "chat-en",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Write a haiku about the sea."
+   }
+  ],
+  "kwargs": {},
+  "prompt": "\u003c|start|>system\u003c|message|>You are ChatGPT, a large language model trained by OpenAI.\nKnowledge cutoff: 2024-06\nCurrent date: 2026-11-16\n\nReasoning: medium\n\n# Valid channels: analysis, commentary, final. Channel must be included for every message.\u003c|end|>\u003c|start|>user\u003c|message|>Write a haiku about the sea.\u003c|end|>\u003c|start|>assistant"
+ }
+]
