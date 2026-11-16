@@ -87,13 +87,16 @@ def test_worker_reference_matches_gptoss_helpers(monkeypatch):
     assert c > 0.999999 and rel < 1e-4, (c, rel)
 
 
-def _dump_text(ne0, ne1, ids, gap_rows):
+def _dump_text(ne0, ne1, ids, gap_rows, stamp=False):
     """Synthesize the eval-callback block for attn_out-0 (common/debug.cpp):
-    header + printed matrix; gap_rows=True -> first/last 3 values per row."""
+    header + printed matrix; gap_rows=True -> first/last 3 values per row;
+    stamp=True -> llama.cpp log stamps on the token lines (real dumps, S16-2:
+    "0.28.208.200 I number of input tokens = 5", "0.28.208.203 I   976")."""
     val = lambda t, i: 0.05 * t + 0.001 * i
     ts = list(range(ne1)) if ne1 <= 6 else [0, 1, 2, ne1 - 3, ne1 - 2, ne1 - 1]
-    L = [f"0 [main] number of input tokens = {ne1}"]
-    L += [f"  {i}" for i in ids]
+    p = "0.28.208.200 I " if stamp else "0 [main] "
+    L = [f"{p}number of input tokens = {ne1}"]
+    L += [(f"0.28.208.203 I {i:6d}" if stamp else f"  {i}") for i in ids]
     L += ["0 [main] common_debug_cb_eval:               attn_out-0 = (f32)"
           "      ADD(x{1, 1, 1, 1}, ) = {%d, %d, 1, 1}" % (ne0, ne1)]
     L += ["    [", "        ["]
@@ -109,11 +112,13 @@ def _dump_text(ne0, ne1, ids, gap_rows):
     return "\n".join(L) + "\n"
 
 
-@pytest.mark.parametrize("ne1,gap_rows", [(5, True), (9, True), (5, False)])
-def test_parse_dump_synthetic(tmp_path, ne1, gap_rows):
+@pytest.mark.parametrize("ne1,gap_rows,stamp",
+                         [(5, True, False), (9, True, False), (5, False, False),
+                          (5, True, True), (9, True, True)])
+def test_parse_dump_synthetic(tmp_path, ne1, gap_rows, stamp):
     ids = [1000 + t for t in range(ne1)]
     path = tmp_path / "dump.txt"
-    path.write_text(_dump_text(2880, ne1, ids, gap_rows))
+    path.write_text(_dump_text(2880, ne1, ids, gap_rows, stamp))
     got_ids, ne, rows = w.parse_dump(str(path))
     assert got_ids == ids and ne == (2880, ne1, 1, 1)
     want = list(range(ne1)) if ne1 <= 6 else [0, 1, 2, ne1 - 3, ne1 - 2, ne1 - 1]

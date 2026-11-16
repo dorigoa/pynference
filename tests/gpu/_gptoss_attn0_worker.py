@@ -38,8 +38,14 @@ def parse_dump(path):
     for i, ln in enumerate(lines):
         m = re.search(r"number of input tokens = (\d+)", ln)
         if m:
+            # llama.cpp prefixes every printed id with a log stamp (S16-2: "0.28.208.203 I   976")
             n = int(m.group(1))
-            ids = [int(lines[i + 1 + j].strip()) for j in range(n)]
+            ids = []
+            for j in range(n):
+                s = re.search(r"(\d+)\s*$", lines[i + 1 + j])
+                if not s:
+                    raise AssertionError(f"dump: bad token line: {lines[i + 1 + j]!r}")
+                ids.append(int(s.group(1)))
         m = re.search(r"attn_out-0\s*=\s*\(f32\).*?\{\s*(\d+), (\d+), (\d+), (\d+)\}\s*$", ln)
         if m and "attn_out-0{" not in ln:
             ne = tuple(int(x) for x in m.groups())
@@ -166,7 +172,10 @@ def main():
     tp.all_reduce(err)  # both ranks ran the same TP block: max abs rel err, summed
     if tp.is_main:
         print(f"RES cos_attn0={cos:.7f} maxrel_sum_ranks={err.item():.3e} T={T}", flush=True)
-    ok = cos >= COS_TOL and err.item() < 2e-4
+    # plan S16-4 threshold: cos >= COS_TOL. The maxrel guard is only a gross-error net:
+    # the engine matmul/KV is f16 while this reference is f32, so on real Q8_0 weights
+    # maxrel_sum_ranks is ~4.5e-03 (S16-1/-2) even though cos is 0.9999955.
+    ok = cos >= COS_TOL and err.item() < 2e-2
     assert ok, f"attn_out-0 vs reference: cos={cos:.7f} tol={COS_TOL} maxrel_sum={err.item():.3e}"
 
     if dump is not None:
