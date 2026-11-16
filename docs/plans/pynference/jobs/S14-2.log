@@ -1,0 +1,11 @@
+== start 18:10:54
+llama-server up on 8091
+== server-start exit 0
+0.30.134.832 W srv          init: chat template supports preserving reasoning, it is enabled by default (may use more tokens, disable via --no-reasoning-preserve)
+template.json: 2 thinking-0 variants re-rendered
+== fix exit 0
+== server-stop exit 0
+total 8
+-rw-rw-r-- 1 alvise alvise 2652 Nov 16 18:11 llama-server-8091.log
+-rw-rw-r-- 1 alvise alvise 2943 Nov 16 18:11 template.json
+== end 18:11:31
