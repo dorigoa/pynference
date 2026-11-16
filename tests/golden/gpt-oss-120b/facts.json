@@ -1,0 +1,641 @@
+{
+ "architecture": "gpt-oss",
+ "n_tensors": 687,
+ "tensor_bytes_gib": 59.02,
+ "metadata": {
+  "general.architecture": "gpt-oss",
+  "general.type": "model",
+  "general.name": "gpt-oss-120b",
+  "general.size_label": "128x3.1B",
+  "general.license": "apache-2.0",
+  "general.tags": [
+   "vllm",
+   "text-generation"
+  ],
+  "gpt-oss.block_count": 36,
+  "gpt-oss.context_length": 131072,
+  "gpt-oss.embedding_length": 2880,
+  "gpt-oss.feed_forward_length": 2880,
+  "gpt-oss.attention.head_count": 64,
+  "gpt-oss.attention.head_count_kv": 8,
+  "gpt-oss.rope.scaling.type": "yarn",
+  "gpt-oss.rope.scaling.factor": 32.0,
+  "gpt-oss.rope.scaling.original_context_length": 4096,
+  "gpt-oss.rope.scaling.yarn_beta_fast": 32.0,
+  "gpt-oss.rope.scaling.yarn_beta_slow": 1.0,
+  "gpt-oss.rope.freq_base": 150000.0,
+  "gpt-oss.attention.layer_norm_rms_epsilon": 9.999999747378752e-06,
+  "gpt-oss.expert_count": 128,
+  "gpt-oss.expert_used_count": 4,
+  "gpt-oss.attention.key_length": 64,
+  "gpt-oss.attention.value_length": 64,
+  "gpt-oss.attention.sliding_window": 128,
+  "gpt-oss.expert_feed_forward_length": 2880,
+  "tokenizer.ggml.model": "gpt2",
+  "tokenizer.ggml.pre": "gpt-4o",
+  "tokenizer.ggml.tokens": {
+   "_list_len": 201088
+  },
+  "tokenizer.ggml.token_type": {
+   "_array_len": 201088
+  },
+  "tokenizer.ggml.merges": {
+   "_list_len": 446189
+  },
+  "tokenizer.ggml.bos_token_id": 199998,
+  "tokenizer.ggml.eos_token_id": 200002,
+  "tokenizer.ggml.padding_token_id": 199999,
+  "tokenizer.chat_template": {
+   "_string_len": 16714
+  },
+  "general.quantization_version": 2,
+  "general.file_type": 38
+ },
+ "tensor_types": {
+  "Q8_0": 146,
+  "F32": 433,
+  "MXFP4": 108
+ },
+ "blocks": {
+  "blk.0": {
+   "blk.0.attn_k.bias": {
+    "shape": [
+     512
+    ],
+    "type": "F32"
+   },
+   "blk.0.attn_k.weight": {
+    "shape": [
+     2880,
+     512
+    ],
+    "type": "Q8_0"
+   },
+   "blk.0.attn_norm.weight": {
+    "shape": [
+     2880
+    ],
+    "type": "F32"
+   },
+   "blk.0.attn_output.bias": {
+    "shape": [
+     2880
+    ],
+    "type": "F32"
+   },
+   "blk.0.attn_output.weight": {
+    "shape": [
+     4096,
+     2880
+    ],
+    "type": "Q8_0"
+   },
+   "blk.0.attn_q.bias": {
+    "shape": [
+     4096
+    ],
+    "type": "F32"
+   },
+   "blk.0.attn_q.weight": {
+    "shape": [
+     2880,
+     4096
+    ],
+    "type": "Q8_0"
+   },
+   "blk.0.attn_sinks.weight": {
+    "shape": [
+     64
+    ],
+    "type": "F32"
+   },
+   "blk.0.attn_v.bias": {
+    "shape": [
+     512
+    ],
+    "type": "F32"
+   },
+   "blk.0.attn_v.weight": {
+    "shape": [
+     2880,
+     512
+    ],
+    "type": "Q8_0"
+   },
+   "blk.0.ffn_down_exps.bias": {
+    "shape": [
+     2880,
+     128
+    ],
+    "type": "F32"
+   },
+   "blk.0.ffn_down_exps.weight": {
+    "shape": [
+     2880,
+     2880,
+     128
+    ],
+    "type": "MXFP4"
+   },
+   "blk.0.ffn_gate_exps.bias": {
+    "shape": [
+     2880,
+     128
+    ],
+    "type": "F32"
+   },
+   "blk.0.ffn_gate_exps.weight": {
+    "shape": [
+     2880,
+     2880,
+     128
+    ],
+    "type": "MXFP4"
+   },
+   "blk.0.ffn_gate_inp.bias": {
+    "shape": [
+     128
+    ],
+    "type": "F32"
+   },
+   "blk.0.ffn_gate_inp.weight": {
+    "shape": [
+     2880,
+     128
+    ],
+    "type": "F32"
+   },
+   "blk.0.ffn_up_exps.bias": {
+    "shape": [
+     2880,
+     128
+    ],
+    "type": "F32"
+   },
+   "blk.0.ffn_up_exps.weight": {
+    "shape": [
+     2880,
+     2880,
+     128
+    ],
+    "type": "MXFP4"
+   },
+   "blk.0.post_attention_norm.weight": {
+    "shape": [
+     2880
+    ],
+    "type": "F32"
+   }
+  },
+  "blk.1": {
+   "blk.1.attn_k.bias": {
+    "shape": [
+     512
+    ],
+    "type": "F32"
+   },
+   "blk.1.attn_k.weight": {
+    "shape": [
+     2880,
+     512
+    ],
+    "type": "Q8_0"
+   },
+   "blk.1.attn_norm.weight": {
+    "shape": [
+     2880
+    ],
+    "type": "F32"
+   },
+   "blk.1.attn_output.bias": {
+    "shape": [
+     2880
+    ],
+    "type": "F32"
+   },
+   "blk.1.attn_output.weight": {
+    "shape": [
+     4096,
+     2880
+    ],
+    "type": "Q8_0"
+   },
+   "blk.1.attn_q.bias": {
+    "shape": [
+     4096
+    ],
+    "type": "F32"
+   },
+   "blk.1.attn_q.weight": {
+    "shape": [
+     2880,
+     4096
+    ],
+    "type": "Q8_0"
+   },
+   "blk.1.attn_sinks.weight": {
+    "shape": [
+     64
+    ],
+    "type": "F32"
+   },
+   "blk.1.attn_v.bias": {
+    "shape": [
+     512
+    ],
+    "type": "F32"
+   },
+   "blk.1.attn_v.weight": {
+    "shape": [
+     2880,
+     512
+    ],
+    "type": "Q8_0"
+   },
+   "blk.1.ffn_down_exps.bias": {
+    "shape": [
+     2880,
+     128
+    ],
+    "type": "F32"
+   },
+   "blk.1.ffn_down_exps.weight": {
+    "shape": [
+     2880,
+     2880,
+     128
+    ],
+    "type": "MXFP4"
+   },
+   "blk.1.ffn_gate_exps.bias": {
+    "shape": [
+     2880,
+     128
+    ],
+    "type": "F32"
+   },
+   "blk.1.ffn_gate_exps.weight": {
+    "shape": [
+     2880,
+     2880,
+     128
+    ],
+    "type": "MXFP4"
+   },
+   "blk.1.ffn_gate_inp.bias": {
+    "shape": [
+     128
+    ],
+    "type": "F32"
+   },
+   "blk.1.ffn_gate_inp.weight": {
+    "shape": [
+     2880,
+     128
+    ],
+    "type": "F32"
+   },
+   "blk.1.ffn_up_exps.bias": {
+    "shape": [
+     2880,
+     128
+    ],
+    "type": "F32"
+   },
+   "blk.1.ffn_up_exps.weight": {
+    "shape": [
+     2880,
+     2880,
+     128
+    ],
+    "type": "MXFP4"
+   },
+   "blk.1.post_attention_norm.weight": {
+    "shape": [
+     2880
+    ],
+    "type": "F32"
+   }
+  }
+ },
+ "global_tensors": {
+  "output.weight": {
+   "shape": [
+    2880,
+    201088
+   ],
+   "type": "Q8_0"
+  },
+  "output_norm.weight": {
+   "shape": [
+    2880
+   ],
+   "type": "F32"
+  },
+  "token_embd.weight": {
+   "shape": [
+    2880,
+    201088
+   ],
+   "type": "Q8_0"
+  }
+ },
+ "expert_tensor_signatures": {},
+ "other_block_tensor_signatures": {
+  "attn_k.bias": {
+   "shape": [
+    512
+   ],
+   "type": "F32"
+  },
+  "attn_k.weight": {
+   "shape": [
+    2880,
+    512
+   ],
+   "type": "Q8_0"
+  },
+  "attn_norm.weight": {
+   "shape": [
+    2880
+   ],
+   "type": "F32"
+  },
+  "attn_output.bias": {
+   "shape": [
+    2880
+   ],
+   "type": "F32"
+  },
+  "attn_output.weight": {
+   "shape": [
+    4096,
+    2880
+   ],
+   "type": "Q8_0"
+  },
+  "attn_q.bias": {
+   "shape": [
+    4096
+   ],
+   "type": "F32"
+  },
+  "attn_q.weight": {
+   "shape": [
+    2880,
+    4096
+   ],
+   "type": "Q8_0"
+  },
+  "attn_sinks.weight": {
+   "shape": [
+    64
+   ],
+   "type": "F32"
+  },
+  "attn_v.bias": {
+   "shape": [
+    512
+   ],
+   "type": "F32"
+  },
+  "attn_v.weight": {
+   "shape": [
+    2880,
+    512
+   ],
+   "type": "Q8_0"
+  },
+  "ffn_down_exps.bias": {
+   "shape": [
+    2880,
+    128
+   ],
+   "type": "F32"
+  },
+  "ffn_down_exps.weight": {
+   "shape": [
+    2880,
+    2880,
+    128
+   ],
+   "type": "MXFP4"
+  },
+  "ffn_gate_exps.bias": {
+   "shape": [
+    2880,
+    128
+   ],
+   "type": "F32"
+  },
+  "ffn_gate_exps.weight": {
+   "shape": [
+    2880,
+    2880,
+    128
+   ],
+   "type": "MXFP4"
+  },
+  "ffn_gate_inp.bias": {
+   "shape": [
+    128
+   ],
+   "type": "F32"
+  },
+  "ffn_gate_inp.weight": {
+   "shape": [
+    2880,
+    128
+   ],
+   "type": "F32"
+  },
+  "ffn_up_exps.bias": {
+   "shape": [
+    2880,
+    128
+   ],
+   "type": "F32"
+  },
+  "ffn_up_exps.weight": {
+   "shape": [
+    2880,
+    2880,
+    128
+   ],
+   "type": "MXFP4"
+  },
+  "output.weight": {
+   "shape": [
+    2880,
+    201088
+   ],
+   "type": "Q8_0"
+  },
+  "output_norm.weight": {
+   "shape": [
+    2880
+   ],
+   "type": "F32"
+  },
+  "post_attention_norm.weight": {
+   "shape": [
+    2880
+   ],
+   "type": "F32"
+  },
+  "token_embd.weight": {
+   "shape": [
+    2880,
+    201088
+   ],
+   "type": "Q8_0"
+  }
+ },
+ "blk0_expert_tensors": null,
+ "tokenizer": {
+  "model": "gpt2",
+  "n_tokens": 201088,
+  "add_bos_token": false,
+  "bos_token_id": 199998,
+  "eos_token_id": 200002,
+  "eot_token_id": -1,
+  "eom_token_id": -1,
+  "eot_ids": null,
+  "eom_ids": null,
+  "pre": "gpt-4o",
+  "chat_template_len": 16714,
+  "byte_fallback": false,
+  "token_types_sample": [
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1
+  ],
+  "special_tokens": {
+   "\\u003c|startoftext|>": [
+    199998,
+    3
+   ],
+   "\\u003c|endoftext|>": [
+    199999,
+    3
+   ],
+   "\\u003c|reserved_200000|>": [
+    200000,
+    3
+   ],
+   "\\u003c|reserved_200001|>": [
+    200001,
+    3
+   ],
+   "\\u003c|return|>": [
+    200002,
+    3
+   ],
+   "\\u003c|constrain|>": [
+    200003,
+    3
+   ],
+   "\\u003c|reserved_200004|>": [
+    200004,
+    3
+   ],
+   "\\u003c|channel|>": [
+    200005,
+    3
+   ],
+   "\\u003c|start|>": [
+    200006,
+    3
+   ],
+   "\\u003c|end|>": [
+    200007,
+    3
+   ],
+   "\\u003c|message|>": [
+    200008,
+    3
+   ],
+   "\\u003c|reserved_200009|>": [
+    200009,
+    3
+   ],
+   "\\u003c|reserved_200010|>": [
+    200010,
+    3
+   ],
+   "\\u003c|reserved_200011|>": [
+    200011,
+    3
+   ],
+   "\\u003c|call|>": [
+    200012,
+    3
+   ],
+   "\\u003c|reserved_200013|>": [
+    200013,
+    3
+   ],
+   "\\u003c|reserved_200014|>": [
+    200014,
+    3
+   ],
+   "\\u003c|reserved_200015|>": [
+    200015,
+    3
+   ],
+   "\\u003c|reserved_200016|>": [
+    200016,
+    3
+   ],
+   "\\u003c|reserved_200017|>": [
+    200017,
+    3
+   ],
+   "\\u003c|endofprompt|>": [
+    200018,
+    3
+   ],
+   "[PAD200019]": [
+    200019,
+    5
+   ]
+  }
+ }
+}
