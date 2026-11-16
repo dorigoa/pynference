@@ -1,0 +1,173 @@
+== start 01:58:30
+        n, k = min(256, info.n_rows), info.shape[0]
+        raw = f.rows(info.name, 0, n)
+        ref = torch.from_numpy(ref_dequant(raw, qtype)).to(DEV)
+        w = _native(qtype, raw, n, k)
+        out = torch.empty(n, k, dtype=torch.float32, device=DEV)
+        kernels.dequant_native(qtype, w.raw, out)
+        deq = _rel(out, ref)
+        x = torch.randn(1, k, device=DEV)
+        gemv = _rel(w(x), x @ ref.T)
+        print(f"RES {qtype} real {info.name} {n}x{k} deq={deq:.2e} gemv={gemv:.2e}")
+>       assert deq < REL_TOL and gemv < REL_TOL
+E       assert (1.8897638320922852 < 0.0001)
+
+tests/gpu/test_quant_block32.py:110: AssertionError
+_____________________________ test_bandwidth[Q5_0] _____________________________
+
+qtype = 'Q5_0'
+
+    @pytest.mark.parametrize("qtype", NATIVE)
+    def test_bandwidth(qtype):
+        import time
+        n, k = 8192, 5376
+        raw = make_test_blocks(qtype, n, k, seed=5)
+        w = _native(qtype, raw, n, k)
+        x = torch.randn(k, device=DEV)
+        y = torch.empty(1, n, dtype=torch.float32, device=DEV)
+        for _ in range(3):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        it = 20
+        t = time.perf_counter()
+        for _ in range(it):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        gbps = w.nbytes / ((time.perf_counter() - t) / it) / 1e9
+        print(f"RES {qtype} gbps={gbps:.1f} ({w.nbytes / 1e6:.1f} MB)")
+>       assert gbps > MIN_GBPS
+E       assert 22.339755153899446 > 100.0
+
+tests/gpu/test_quant_block32.py:143: AssertionError
+_____________________________ test_bandwidth[Q5_1] _____________________________
+
+qtype = 'Q5_1'
+
+    @pytest.mark.parametrize("qtype", NATIVE)
+    def test_bandwidth(qtype):
+        import time
+        n, k = 8192, 5376
+        raw = make_test_blocks(qtype, n, k, seed=5)
+        w = _native(qtype, raw, n, k)
+        x = torch.randn(k, device=DEV)
+        y = torch.empty(1, n, dtype=torch.float32, device=DEV)
+        for _ in range(3):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        it = 20
+        t = time.perf_counter()
+        for _ in range(it):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        gbps = w.nbytes / ((time.perf_counter() - t) / it) / 1e9
+        print(f"RES {qtype} gbps={gbps:.1f} ({w.nbytes / 1e6:.1f} MB)")
+>       assert gbps > MIN_GBPS
+E       assert 83.32155661198507 > 100.0
+
+tests/gpu/test_quant_block32.py:143: AssertionError
+____________________________ test_bandwidth[IQ4_NL] ____________________________
+
+qtype = 'IQ4_NL'
+
+    @pytest.mark.parametrize("qtype", NATIVE)
+    def test_bandwidth(qtype):
+        import time
+        n, k = 8192, 5376
+        raw = make_test_blocks(qtype, n, k, seed=5)
+        w = _native(qtype, raw, n, k)
+        x = torch.randn(k, device=DEV)
+        y = torch.empty(1, n, dtype=torch.float32, device=DEV)
+        for _ in range(3):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        it = 20
+        t = time.perf_counter()
+        for _ in range(it):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        gbps = w.nbytes / ((time.perf_counter() - t) / it) / 1e9
+        print(f"RES {qtype} gbps={gbps:.1f} ({w.nbytes / 1e6:.1f} MB)")
+>       assert gbps > MIN_GBPS
+E       assert 91.82709263586094 > 100.0
+
+tests/gpu/test_quant_block32.py:143: AssertionError
+=============================== warnings summary ===============================
+tests/gpu/test_quant_block32.py::test_real_tensor[Q4_0]
+  /home/alvise/pynference/tests/gpu/test_quant_block32.py:39: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:208.)
+    dev = torch.from_numpy(np.ascontiguousarray(raw)).to(DEV)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/gpu/test_quant_block32.py::test_dequant_random[Q4_0] - assert (1...
+FAILED tests/gpu/test_quant_block32.py::test_dequant_random[Q4_1] - assert (0...
+FAILED tests/gpu/test_quant_block32.py::test_dequant_random[Q5_0] - assert (0...
+FAILED tests/gpu/test_quant_block32.py::test_dequant_random[Q5_1] - assert (0...
+FAILED tests/gpu/test_quant_block32.py::test_dequant_random[IQ4_NL] - assert ...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_random[Q4_0] - assert 1.450...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_random[Q4_1] - assert 0.618...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_random[Q5_0] - assert 0.818...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_random[Q5_1] - assert 0.475...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_random[IQ4_NL] - assert 1.2...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_indexed_random[Q4_0] - asse...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_indexed_random[Q4_1] - asse...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_indexed_random[Q5_0] - asse...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_indexed_random[Q5_1] - asse...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_indexed_random[IQ4_NL] - as...
+FAILED tests/gpu/test_quant_block32.py::test_real_tensor[Q4_0] - assert (1.0 ...
+FAILED tests/gpu/test_quant_block32.py::test_real_tensor[IQ4_NL] - assert (1....
+FAILED tests/gpu/test_quant_block32.py::test_bandwidth[Q5_0] - assert 22.3397...
+FAILED tests/gpu/test_quant_block32.py::test_bandwidth[Q5_1] - assert 83.3215...
+FAILED tests/gpu/test_quant_block32.py::test_bandwidth[IQ4_NL] - assert 91.82...
+20 failed, 8 passed, 1 skipped, 1 warning in 32.96s
+== pytest block32 exit 1 (01:59:04)
+tests/gpu/test_quant_block32.py:143: AssertionError
+----------------------------- Captured stdout call -----------------------------
+RES Q5_1 gbps=86.4 (33.0 MB)
+=============================== warnings summary ===============================
+tests/gpu/test_quant_block32.py::test_real_tensor[Q4_0]
+  /home/alvise/pynference/tests/gpu/test_quant_block32.py:39: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:208.)
+    dev = torch.from_numpy(np.ascontiguousarray(raw)).to(DEV)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/gpu/test_quant_block32.py::test_dequant_random[Q4_0] - assert (1...
+FAILED tests/gpu/test_quant_block32.py::test_dequant_random[Q4_1] - assert (0...
+FAILED tests/gpu/test_quant_block32.py::test_dequant_random[Q5_0] - assert (0...
+FAILED tests/gpu/test_quant_block32.py::test_dequant_random[Q5_1] - assert (0...
+FAILED tests/gpu/test_quant_block32.py::test_dequant_random[IQ4_NL] - assert ...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_random[Q4_0] - assert 1.322...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_random[Q4_1] - assert 0.777...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_random[Q5_0] - assert 0.638...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_random[Q5_1] - assert 0.335...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_random[IQ4_NL] - assert 1.3...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_indexed_random[Q4_0] - asse...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_indexed_random[Q4_1] - asse...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_indexed_random[Q5_0] - asse...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_indexed_random[Q5_1] - asse...
+FAILED tests/gpu/test_quant_block32.py::test_gemv_indexed_random[IQ4_NL] - as...
+FAILED tests/gpu/test_quant_block32.py::test_real_tensor[Q4_0] - assert (1.0 ...
+FAILED tests/gpu/test_quant_block32.py::test_real_tensor[IQ4_NL] - assert (1....
+FAILED tests/gpu/test_quant_block32.py::test_bandwidth[Q5_0] - assert 22.6930...
+FAILED tests/gpu/test_quant_block32.py::test_bandwidth[Q5_1] - assert 86.3952...
+19 failed, 26 passed, 2 skipped, 1 warning in 19.27s
+== pytest gpu exit 1 (01:59:24)
+== regress exit 0 (02:01:24)
+== regress gemma4: ours --ref (graph) 01:59:24
+  loaded 50/60 layers (22s)
+  loaded 60/60 layers (28s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (02:00:15)
+== regress gemma4: ppl 02:00:15
+== ppl exit 0 (02:01:24)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 13.5s)
+chat-it: max |dp| 1.95e-06 over top-10
+chat-en: max |dp| 5.65e-07 over top-10
+code: max |dp| 1.21e-05 over top-10
+raw: max |dp| 5.51e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 02:01:24
