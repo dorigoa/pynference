@@ -8,7 +8,9 @@ Follows llama.cpp src/models/openai-moe.cpp (S16 map: reports/S16-map.md):
   ext_factor 1, net mscale 1 + 0.1*ln(32) baked into the cos/sin table,
   applied identically on windowed and full layers (openai-moe.cpp:12);
 - output projection with bias (added by rank 0 before the all-reduce);
-- MoE (router + 128 fused MXFP4 experts) arrives in S17.
+- MoE (plan 3.8): router with bias, top-4, softmax over the 4 selected
+  logits, 128 fused MXFP4 experts with per-expert biases, activation
+  swiglu_oai (alpha 1.702, limit 7.0) — served by pynference.moe (C5).
 
 Tensor split over `tp.world` GPUs: attention heads split (Q rows [q_r; k_r; v_r],
 sinks sliced by Q head), the output projection split by input columns with
@@ -167,6 +169,59 @@ def attn_prefill(q, kcache, vcache, kp, pos, window, scale, sinks=None):
     return o
 
 
+# ------------------------------------------------------------- MoE (C5, plan 3.8)
+
+# Per-GPU VRAM budget in decimal GB, plan D8 (GPU 0 also drives the desktop).
+# The expert store gets what is left after dense weights, KV cache and scratch.
+D8_BUDGET_GB = (30.0, 30.9)
+
+
+def moe_expert_groups(g: GGUFFile):
+    """One ExpertGroup per (layer, projection) for the fused MXFP4 experts.
+
+    GGUF layout: blk.N.ffn_{gate,up,down}_exps.weight is [k, n, E] in ggml
+    order (k = 2880 contiguous inputs, n = 2880 outputs, E experts), so global
+    expert e occupies rows [e*n, (e+1)*n), i.e. e * slot_bytes bytes flat.
+    """
+    from ..moe import ExpertGroup  # lazy import: no Triton at module load (header note)
+    groups = []
+    for il in range(int(g.get("block_count"))):
+        for proj in ("gate", "up", "down"):
+            name = f"blk.{il}.ffn_{proj}_exps.weight"
+            t = g.tensors[name]
+            if t.type != "MXFP4":
+                raise NotImplementedError(
+                    f"{name}: {t.type} experts not supported (MXFP4 only)")
+            k, n, e = t.shape
+            groups.append(ExpertGroup(proj, il, e, n, k, t.type,
+                                      lambda ex, t=name, n=n: g.rows(t, ex * n, (ex + 1) * n)))
+    return groups
+
+
+def _f32_reshaped(g: GGUFFile, name: str, shape) -> torch.Tensor:
+    t = g.tensors[name]
+    assert t.type == "F32", (name, t.type)
+    return torch.from_numpy(np.array(g.raw(name).view(np.float32))).reshape(shape)
+
+
+def moe_router(g: GGUFFile, il: int):
+    """Router f32: ffn_gate_inp.weight [k, E] (ggml order) -> [E, k]; bias [E]."""
+    k, e = g.tensors[f"blk.{il}.ffn_gate_inp.weight"].shape
+    return (_f32_reshaped(g, f"blk.{il}.ffn_gate_inp.weight", (e, k)),
+            _f32_reshaped(g, f"blk.{il}.ffn_gate_inp.bias", (e,)))
+
+
+def moe_expert_bias(g: GGUFFile, il: int):
+    """Per-expert f32 biases ffn_{gate,up,down}_exps.bias [n, E] -> (E, n) each,
+    ordered (gate, up, down) as MoE expects."""
+    out = []
+    for proj in ("gate", "up", "down"):
+        name = f"blk.{il}.ffn_{proj}_exps.bias"
+        n, e = g.tensors[name].shape
+        out.append(_f32_reshaped(g, name, (e, n)))
+    return tuple(out)
+
+
 class _Layer:
     pass
 
@@ -185,6 +240,8 @@ class GPTOss:
         self._nsp_swa = (c.window + self._split_swa - 1) // self._split_swa
         self._split_full = max(256, ((max_ctx + 63) // 64 + 15) // 16 * 16)
         self._nsp_full = (max_ctx + self._split_full - 1) // self._split_full
+        self.fast_decode, self.use_graph = True, False   # C3; the graph comes in S18
+        self._dense_bytes = 0   # non-expert GPU bytes, for the expert budget (D8)
         t0 = time.time()
 
         self.v0, self.v1 = tp.split(c.n_vocab)
@@ -201,6 +258,9 @@ class GPTOss:
             self.layers.append(self._load_layer(il))
             if tp.is_main and (il + 1) % 10 == 0:
                 print(f"  loaded {il + 1}/{c.n_layer} layers ({time.time() - t0:.0f}s)", flush=True)
+        # the expert budget needs the KV cache allocated, so size the MoE after reset()
+        self.reset()
+        self.store, self.moe = self._load_moe()
         torch.xpu.synchronize(dev)
         self.load_seconds = time.time() - t0
 
@@ -208,6 +268,7 @@ class GPTOss:
     def _f32(self, name: str) -> torch.Tensor:
         t = self.g.tensors[name]
         assert t.type == "F32", (name, t.type)
+        self._dense_bytes += t.nbytes
         return torch.from_numpy(np.array(self.g.raw(name).view(np.float32))).to(self.tp.device)
 
     def _check_q8(self, name: str):
@@ -223,6 +284,7 @@ class GPTOss:
         raw = self.g.rows(name, r0, r1)
         if cols:
             raw = raw[:, cols[0] // 32 * 34: cols[1] // 32 * 34]
+        self._dense_bytes += raw.nbytes
         return QLinear.from_q8_0(raw, raw.shape[0], raw.shape[1] // 34 * 32, self.tp.device)
 
     def _stack_rows(self, names, row_ranges):
@@ -232,6 +294,7 @@ class GPTOss:
             self._check_q8(name)
             parts.append(self.g.rows(name, r0, r1))
         raw = np.concatenate(parts, axis=0)
+        self._dense_bytes += raw.nbytes
         return QLinear.from_q8_0(raw, raw.shape[0], raw.shape[1] // 34 * 32, self.tp.device)
 
     def _load_layer(self, il: int) -> _Layer:
@@ -256,6 +319,52 @@ class GPTOss:
         L.attn_norm = self._f32(p + "attn_norm.weight")
         L.post_attn_norm = self._f32(p + "post_attention_norm.weight")
         return L
+
+    def _load_moe(self):
+        """ExpertStore + one MoE per layer (C5, plan 3.8): router with bias,
+        top-4, softmax over the 4 selected logits, MXFP4 experts with
+        per-expert biases, swiglu_oai (alpha 1.702, limit 7.0).
+
+        Expert budget per GPU (D8): the per-rank VRAM budget minus dense
+        weights, KV cache and a scratch allowance (bf16 dequant buffers for
+        the prefill path + chunk-sized attention transients)."""
+        from ..moe import ExpertStore, MoE   # lazy import (module header note)
+        c, tp, dev = self.cfg, self.tp, self.tp.device
+        groups = moe_expert_groups(self.g)
+        n_exp = int(self.g.get("expert_count", groups[0].n_experts))
+        top_k = int(self.g.get("expert_used_count", 4))
+        if n_exp != groups[0].n_experts or top_k < 1:
+            raise ValueError(f"gpt-oss: expert_count {n_exp} / expert_used_count {top_k}")
+        router, biases = [], []
+        for il in range(c.n_layer):
+            w, b = moe_router(self.g, il)
+            eb = moe_expert_bias(self.g, il)
+            router.append((w.to(dev), b.to(dev)))
+            biases.append(tuple(t.to(dev) for t in eb))
+        tiny = sum(t.numel() * 4 for il in range(c.n_layer)
+                   for t in (*router[il], *biases[il]))       # router + expert biases
+        cos_sin = 2 * self.max_ctx * (c.n_rot // 2) * 4        # rope table
+        dense = self._dense_bytes + tiny + cos_sin
+        kv = self.kv_bytes()
+        scratch = 1 << 30   # bf16 dequant scratch (~50 MB) + prefill transients
+        budget = max(int(D8_BUDGET_GB[tp.rank] * 1e9) - dense - kv - scratch, 0)
+        if tp.is_main:
+            print(f"  MoE: {n_exp} experts x {c.n_layer} layers, budget "
+                  f"{budget / 1e9:.2f} GB (dense {dense / 1e9:.2f}, kv {kv / 1e9:.2f}, "
+                  f"scratch {scratch / 1e9:.2f})", flush=True)
+        store = ExpertStore(groups, tp, budget)
+        moe = [MoE(store, il, top_k=top_k, router_w=router[il][0],
+                   router_bias=router[il][1], activation="swiglu_oai",
+                   routing="logits", expert_bias=biases[il])
+               for il in range(c.n_layer)]
+        if tp.is_main:
+            tot = c.n_layer * len(store.local_ids[0])
+            res = sum(len(m.resident) for m in store.maps.values())
+            swp = sum(m.S - m.R for m in store.maps.values())
+            print(f"  MoE: {res} of {tot} local experts resident, {swp} swap slots, "
+                  f"store {store.memory_bytes() / 1e9:.2f} GB, "
+                  f"pinned {store.pinned_bytes() / 1e9:.2f} GB", flush=True)
+        return store, moe
 
     # ---- KV cache ----
     def reset(self):

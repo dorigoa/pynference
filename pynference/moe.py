@@ -191,6 +191,8 @@ def route_weights(logits: torch.Tensor, top_k: int) -> tuple[list[int], list[flo
     """Decode routing (C5): softmax over all experts, top-k, renormalize.
 
     Returns host lists (ids ascending by score, weights summing to 1).
+    Mathematically equivalent to `topk_weights(..., "logits")`, but GPT-OSS
+    (C8) runs the exact llama.cpp op sequence, so use that routing there.
     """
     p = torch.softmax(logits.detach().float().reshape(-1), 0)
     w, idx = torch.topk(p, top_k)
@@ -198,18 +200,42 @@ def route_weights(logits: torch.Tensor, top_k: int) -> tuple[list[int], list[flo
     return idx.tolist(), w.tolist()
 
 
+ROUTINGS = ("renorm", "logits")
+
+
+def topk_weights(logits: torch.Tensor, top_k: int,
+                 routing: str = "renorm") -> tuple[torch.Tensor, torch.Tensor]:
+    """Router logits [..., E] -> (weights [..., k], ids [..., k]).
+
+    "renorm": softmax over all experts, top-k, renormalize (C5 default).
+    "logits": GPT-OSS exact form (llama-graph.cpp:2295-2420, gating
+    SOFTMAX_WEIGHT): top-k on the raw logits, softmax over just those k,
+    no renormalization.
+    """
+    if routing == "logits":
+        top, idx = torch.topk(logits, top_k, dim=-1)
+        return torch.softmax(top, -1), idx
+    if routing != "renorm":
+        raise ValueError(f"unknown routing {routing!r}, expected one of {ROUTINGS}")
+    p = torch.softmax(logits, dim=-1)
+    w, idx = torch.topk(p, top_k, dim=-1)
+    return w / w.sum(-1, keepdim=True), idx
+
+
 def swiglu(gate: torch.Tensor, up: torch.Tensor) -> torch.Tensor:
     return F.silu(gate) * up
 
 
 def swiglu_oai(gate: torch.Tensor, up: torch.Tensor, alpha: float = 1.702,
-               limit: float = 7.0010) -> torch.Tensor:
-    """GPT-OSS activation (model card / ggml swiglu_oai): both inputs clamped
-    to +-limit, gate * sigmoid(alpha * gate) * (up + limit). To be re-checked
-    against gpt-oss golden in S17 (no llama.cpp source available for S15)."""
-    gate = gate.clamp(-limit, limit)
+               limit: float = 7.0) -> torch.Tensor:
+    """GPT-OSS activation, exactly as ggml swiglu_oai_f32
+    (ggml/src/ggml-cpu/ops.cpp:3388-3450, verified in S17): gate is clipped
+    only on the high side (min(gate, limit)), up is clamped to +-limit, and
+    the result is gate * sigmoid(alpha * gate) * (up + 1). llama.cpp passes
+    alpha = 1.702f, limit = 7.0f (llama-graph.cpp:2143-2149)."""
+    gate = gate.clamp(max=limit)
     up = up.clamp(-limit, limit)
-    return gate * torch.sigmoid(alpha * gate) * (up + limit)
+    return gate * torch.sigmoid(alpha * gate) * (up + 1.0)
 
 
 ACTIVATIONS = {"swiglu": swiglu, "swiglu_oai": swiglu_oai}
@@ -374,6 +400,12 @@ class MoE:
     (`make_qweight` does not shard), so it is added after the `all_reduce`
     — adding it before would multiply it by the world size.
 
+    `routing` selects the weight rule of `topk_weights` ("renorm" default,
+    "logits" for GPT-OSS). `expert_bias`, when given, is a triple (gate, up,
+    down) of float32 [E, n] tensors (n = ffn, ffn, k): a per-expert bias
+    added to each projection output (GPT-OSS ffn_*_exps.bias); it is small
+    enough to replicate [E, n] on every rank and index by global expert id.
+
     Decode (M = 1): the top-k lands on the host with one sync per layer
     (C5), so the layer can batch local experts for `resolve`: residents in
     one batch with up to `X` swap misses, further misses in blocks of `X`
@@ -386,7 +418,8 @@ class MoE:
     def __init__(self, store: ExpertStore, layer: int, *, top_k: int,
                  router_w: torch.Tensor, router_bias: torch.Tensor | None = None,
                  activation: str = "swiglu", alpha: float = 1.702,
-                 limit: float = 7.0010, shared=None):
+                 limit: float = 7.0, shared=None, routing: str = "renorm",
+                 expert_bias=None):
         self.store = store
         self.tp = store.tp
         self.layer = layer
@@ -407,6 +440,20 @@ class MoE:
             raise ValueError(f"router_bias must be [{self.n_experts}]")
         self.router_w = router_w
         self.router_bias = router_bias
+        if routing not in ROUTINGS:
+            raise ValueError(f"unknown routing {routing!r}, expected one of {ROUTINGS}")
+        self.routing = routing
+        if expert_bias is None:
+            self.eb = None
+        else:
+            eb = tuple(expert_bias)
+            want = ((self.n_experts, self.ffn), (self.n_experts, self.ffn),
+                    (self.n_experts, self.k))
+            if len(eb) != 3 or any(t.shape != w or t.dtype != torch.float32
+                                   for t, w in zip(eb, want)):
+                raise ValueError(f"expert_bias must be three float32 tensors "
+                                 f"{[list(w) for w in want]}")
+            self.eb = eb
         act = ACTIVATIONS[activation]
         self.act = functools.partial(act, alpha=alpha, limit=limit) \
             if activation == "swiglu_oai" else act
@@ -429,7 +476,8 @@ class MoE:
         """One token: x [1, k] (or [k]) f32 -> [k] f32 summed over ranks."""
         x = x.reshape(1, self.k)
         dev = x.device
-        ids, w = route_weights(self._logits(x)[0], self.top_k)  # one host sync (C5)
+        w, idx = topk_weights(self._logits(x), self.top_k, self.routing)
+        ids, w = idx[0].tolist(), w[0].tolist()  # one host sync (C5)
         y = torch.zeros(self.k, dtype=torch.float32, device=dev)
         m = self.store.maps[self.layer]
         X = m.S - m.R  # swap slots: fresh misses allowed per resolve
@@ -448,9 +496,15 @@ class MoE:
             u = torch.empty(L, self.ffn, dtype=torch.float32, device=dev)
             gemv_indexed(self.gate.qtype, self.store.bufs[self.layer]["gate"], xrep, slots, g)
             gemv_indexed(self.up.qtype, self.store.bufs[self.layer]["up"], xrep, slots, u)
+            if self.eb is not None:  # per-expert bias, indexed by global id
+                ei = torch.tensor([e for e, _ in b], dtype=torch.long, device=dev)
+                g += self.eb[0][ei]
+                u += self.eb[1][ei]
             a = self.act(g, u).contiguous()
             d = torch.empty(L, self.k, dtype=torch.float32, device=dev)
             gemv_indexed(self.down.qtype, self.store.bufs[self.layer]["down"], a, slots, d)
+            if self.eb is not None:
+                d += self.eb[2][ei]
             wts = torch.tensor([wt for _, wt in b], dtype=torch.float32, device=dev)
             y += (d * wts[:, None]).sum(0)
         y = self.tp.all_reduce(y)
@@ -462,18 +516,21 @@ class MoE:
         """Token chunk: x [T, k] f32 -> [T, k] f32 summed over ranks."""
         x = x.reshape(-1, self.k)
         dev = x.device
-        p = torch.softmax(self._logits(x), 1)
-        w, idx = torch.topk(p, self.top_k, dim=1)
-        w = w / w.sum(1, keepdim=True)
+        w, idx = topk_weights(self._logits(x), self.top_k, self.routing)
         ids_h, w_h = idx.cpu().tolist(), w.float().cpu().tolist()  # one sync
         y = torch.zeros_like(x)
         for e, (rows, wts) in group_by_expert(ids_h, w_h, self.local).items():
             slot = self.store.resolve(self.layer, [e]).item()
             r = torch.from_numpy(rows).to(dev)
             xt = x[r]
-            a = self.act(self._gemm(self.gate, slot, xt),
-                         self._gemm(self.up, slot, xt))
+            g, u = self._gemm(self.gate, slot, xt), self._gemm(self.up, slot, xt)
+            if self.eb is not None:  # per-expert bias (global id e)
+                g = g + self.eb[0][e]
+                u = u + self.eb[1][e]
+            a = self.act(g, u)
             d = self._gemm(self.down, slot, a)
+            if self.eb is not None:
+                d = d + self.eb[2][e]
             y.index_add_(0, r, d * torch.from_numpy(wts).to(dev)[:, None])
         y = self.tp.all_reduce(y)
         if self.shared is not None:  # replicated: add once, after the reduce

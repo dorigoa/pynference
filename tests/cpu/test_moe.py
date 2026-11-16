@@ -7,7 +7,8 @@ import torch
 
 from pynference.moe import (ExpertGroup, HostPool, MoE, SlotMap, ACTIVATIONS,
                             expert_owner, group_by_expert, local_experts,
-                            plan_residency, route_weights, swiglu, swiglu_oai)
+                            plan_residency, route_weights, swiglu, swiglu_oai,
+                            topk_weights)
 from pynference.quant import row_bytes
 
 
@@ -163,17 +164,52 @@ def test_swiglu_matches_formula():
     assert torch.allclose(swiglu(g, u), torch.nn.functional.silu(g) * u)
 
 
-def test_swiglu_oai_clamps_and_scales():
-    alpha, limit = 1.702, 7.0010
-    g = torch.tensor([-10.0, 0.0, 10.0])
-    u = torch.tensor([8.0, -8.0, 0.0])
+def test_swiglu_oai_matches_ggml():
+    # S17: exact ggml swiglu_oai_f32 (ops.cpp:3388-3450, llama-graph.cpp:2143-2149):
+    # x = min(gate, 7) (high side only), y = clamp(up, -7, 7),
+    # out = x / (1 + exp(-1.702*x)) * (y + 1)   (alpha 1.702, limit 7.0)
+    alpha, limit = 1.702, 7.0
+    g = torch.tensor([-10.0, -3.0, 0.0, 3.0, 10.0])
+    u = torch.tensor([9.0, -9.0, 0.0, 8.0, -8.0])
     got = swiglu_oai(g, u)
-    gc, uc = g.clamp(-limit, limit), u.clamp(-limit, limit)
-    want = gc * torch.sigmoid(alpha * gc) * (uc + limit)
-    assert torch.allclose(got, want)
-    assert got[0] < 0 and got[1] == 0  # odd-ish in gate, zero at gate 0
-    assert (got <= limit * (2 * limit)).all()
+    gc, uc = g.clamp(max=limit), u.clamp(-limit, limit)
+    want = gc / (1.0 + torch.exp(-alpha * gc)) * (uc + 1.0)
+    assert torch.allclose(got, want, atol=1e-6)
+    # gate clipped only above: out(10, 0) == limit * (0 + 1) * sigmoid(1.702*7)
+    # (sigmoid 11.9 is 0.9999933, not exactly 1, in float32: tolerance 1e-4)
+    assert abs(float(swiglu_oai(torch.tensor([10.0]), torch.tensor([0.0]))) - limit) < 1e-4
+    # gate not clipped below: huge negative gate -> ~0, not -limit (the old S15 form)
+    assert abs(float(swiglu_oai(torch.tensor([-100.0]), torch.tensor([0.0])))) < 1e-8
+    # up shifted by +1 (not +limit): out(0, u) == 0, out(1, 100) uses y = 7 -> 8x
+    assert float(swiglu_oai(torch.tensor([0.0]), torch.tensor([123.0]))) == 0.0
+    big = float(swiglu_oai(torch.tensor([1.0]), torch.tensor([100.0])))
+    assert abs(big - float(swiglu_oai(torch.tensor([1.0]), torch.tensor([limit])))) < 1e-5
     assert set(ACTIVATIONS) == {"swiglu", "swiglu_oai"}
+
+
+def test_topk_weights_renorm_matches_route_weights():
+    logits = torch.tensor([[2.0, 1.0, 0.0, 3.0, -1.0, 4.0]])
+    w, idx = topk_weights(logits, 3, "renorm")
+    assert idx[0].tolist() == [5, 3, 0]
+    p = torch.softmax(logits, -1)[0, [5, 3, 0]]
+    assert torch.allclose(w[0], p / p.sum(), atol=1e-6)
+    ids, wl = route_weights(logits[0], 3)
+    assert ids == idx[0].tolist() and torch.allclose(torch.tensor(wl), w[0], atol=1e-6)
+
+
+def test_topk_weights_logits_softmaxes_only_the_topk():
+    # GPT-OSS (llama-graph.cpp SOFTMAX_WEIGHT): top-k on the logits, softmax
+    # over the k only, no renormalization. Mathematically equivalent to
+    # softmax-all + renorm (softmax is order-preserving), but we run the
+    # exact llama.cpp op sequence for C8.
+    logits = torch.tensor([[2.0, 1.0, 0.0, 3.0, -1.0, 4.0]])
+    w, idx = topk_weights(logits, 3, "logits")
+    assert idx[0].tolist() == [5, 3, 0]
+    assert torch.allclose(w[0], torch.softmax(logits[0, [5, 3, 0]], 0), atol=1e-6)
+    w_renorm, _ = topk_weights(logits, 3, "renorm")
+    assert torch.allclose(w[0], w_renorm[0], atol=1e-6)  # same up to rounding
+    with pytest.raises(ValueError, match="unknown routing"):
+        topk_weights(logits, 2, "argmax")
 
 
 # ------------------------------------------------------------- prefill grouping
@@ -233,6 +269,25 @@ def test_moe_construction_rejects_bad_inputs():
         _moe(router_w=torch.randn(6, 128))
     with pytest.raises(ValueError, match="router_bias must be"):
         _moe(router_bias=torch.randn(4))
+
+
+def test_moe_routing_and_expert_bias_validation():
+    m = _moe(routing="logits", activation="swiglu_oai")
+    assert m.routing == "logits" and m.act.keywords["limit"] == 7.0
+    with pytest.raises(ValueError, match="unknown routing"):
+        _moe(routing="softmax")
+    E, ffn, k = 8, 32, 128  # gate/up [E, ffn], down [E, k], float32
+    good = (torch.zeros(E, ffn), torch.zeros(E, ffn), torch.zeros(E, k))
+    got = _moe(expert_bias=good).eb
+    assert all(t is r for t, r in zip(got, good))
+    with pytest.raises(ValueError, match="expert_bias must be"):
+        _moe(expert_bias=(torch.zeros(E, ffn),) * 3)  # down must be [E, k]
+    with pytest.raises(ValueError, match="expert_bias must be"):
+        _moe(expert_bias=(torch.zeros(E, ffn), torch.zeros(E, ffn)))
+    with pytest.raises(ValueError, match="expert_bias must be"):
+        _moe(expert_bias=(torch.zeros(E, ffn, dtype=torch.float16),
+                          torch.zeros(E, ffn, dtype=torch.float16),
+                          torch.zeros(E, k, dtype=torch.float16)))
 
 
 # ------------------------------------------------------------- bench seed guards

@@ -81,9 +81,10 @@ def _swiglu_np(g, u):
     return g / (1.0 + np.exp(-g)) * u
 
 
-def _swiglu_oai_np(g, u, alpha=1.702, limit=7.0010):
-    g, u = np.clip(g, -limit, limit), np.clip(u, -limit, limit)
-    return g / (1.0 + np.exp(-alpha * g)) * (u + limit)
+def _swiglu_oai_np(g, u, alpha=1.702, limit=7.0):
+    # ggml swiglu_oai_f32 (verified in S17): gate clipped only on the high side, +1 shift
+    g, u = np.minimum(g, limit), np.clip(u, -limit, limit)
+    return g / (1.0 + np.exp(-alpha * g)) * (u + 1.0)
 
 
 @pytest.fixture(scope="module")
