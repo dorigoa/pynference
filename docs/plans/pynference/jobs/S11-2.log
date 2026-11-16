@@ -1,0 +1,28 @@
+== start 11:27:08
+RES MXFP4 deq=0.00e+00 deq_rows=0.00e+00
+15 passed in 79.10s (0:01:19)
+== pytest s11 exit 0 (11:28:27)
+........................................................................ [ 84%]
+.............                                                            [100%]
+85 passed, 1 skipped in 316.60s (0:05:16)
+== pytest gpu exit 0 (11:33:45)
+== regress exit 0 (11:35:28)
+== regress gemma4: ours --ref (graph) 11:33:45
+  loaded 50/60 layers (24s)
+  loaded 60/60 layers (30s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (11:34:37)
+== regress gemma4: ppl 11:34:37
+== ppl exit 0 (11:35:28)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 12.0s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 11:35:28
