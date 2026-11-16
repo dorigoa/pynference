@@ -139,6 +139,7 @@ golden e delle finestre GPU.
 docs/plans/pynference/tools/run-sections.sh S6        # da S6 fino al prossimo ⛔
 docs/plans/pynference/tools/run-sections.sh S9 S12    # da S9 a S12
 docs/plans/pynference/tools/run-sections.sh --status  # stato di tutte le sezioni
+docs/plans/pynference/tools/run-sections.sh --check   # PC, Strata, tunnel, risposta di prova
 ```
 
 Ogni sezione gira in una sessione nuova di Claude CLI (contesto vuoto). Lo
@@ -146,6 +147,12 @@ script avvia Strata se non risponde, esegue le finestre GPU, riprende le
 sezioni interrotte finché fanno progressi e si ferma dopo ogni sezione ⛔.
 Le istruzioni complete sono in testa allo script; i log in
 `scratch/logs/runner/`.
+
+Claude CLI raggiunge Strata attraverso un tunnel ssh su `127.0.0.1:18000`,
+aperto e chiuso dallo script: su macOS il permesso "Rete locale" a volte
+smette di valere per Claude CLI ("Can't reach the API server",
+FailedToOpenSocket), mentre ssh e curl continuano a funzionare.
+`PYI_TUNNEL=0` usa il profilo così com'è.
 
 **A mano.** Avvia `claude --settings ~/.claude/strata.json` dalla radice del
 repository e incolla, con il numero della sezione al posto di `N`:
@@ -213,6 +220,14 @@ fermo: guarda il log sul PC e riavvialo a mano.
   rilancia. Il report spiega cosa non torna.
 - **Un test non passa dopo 3 tentativi**: decidi tu se riprendere, rivedere
   la scheda o spezzarla.
+- **Il tunnel ssh non parte** perché la chiave del PC non è quella in
+  `~/.ssh/known_hosts` (succede dopo una reinstallazione: con una chiave che
+  non torna ssh esegue i comandi, ma blocca il port forwarding). Leggi
+  l'impronta sul PC con `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`,
+  poi sul Mac `ssh-keygen -R 192.168.1.200` e
+  `ssh -o StrictHostKeyChecking=accept-new -o ControlPath=none ubuntu true`:
+  l'impronta che ssh salva deve essere la stessa. Verifica con
+  `run-sections.sh --check`.
 
 ## 1.7 I tuoi controlli (⛔)
 

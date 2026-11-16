@@ -8,6 +8,16 @@
 #   docs/plans/pynference/tools/run-sections.sh S6        # da S6 fino al prossimo ⛔
 #   docs/plans/pynference/tools/run-sections.sh S9 S12    # da S9 a S12
 #   docs/plans/pynference/tools/run-sections.sh --status  # stato di tutte le sezioni
+#   docs/plans/pynference/tools/run-sections.sh --check   # PC, Strata, tunnel e una
+#                                                         # risposta di prova di Claude CLI
+#
+# Tunnel: Claude CLI raggiunge Strata attraverso un tunnel ssh su 127.0.0.1
+# (PYI_TUNNEL_PORT, 18000), con una copia del profilo che punta lì
+# (scratch/logs/runner/settings-tunnel.json, cancellata alla fine). Serve perché
+# su macOS il permesso "Rete locale" a volte smette di valere per i programmi
+# che non sono di sistema: Claude CLI riceve "No route to host"
+# (FailedToOpenSocket) verso il PC, mentre ssh e curl funzionano ancora.
+# PYI_TUNNEL=0 lo disattiva (Claude CLI usa il profilo così com'è).
 #
 # Finestre GPU: quando il report di una sezione dice "Stato: In attesa GPU (job
 # NOME)", lo script esegue tools/gpu-window.sh run NOME (ferma Strata, esegue il
@@ -33,7 +43,8 @@
 #   - un controllo iniziale fallisce (branch, working tree, server, altra sessione).
 # Le sezioni già "Completata" vengono saltate.
 #
-# Variabili: PYI_SETTINGS (default ~/.claude/strata.json), MAX_STALLS (3),
+# Variabili: PYI_SETTINGS (default ~/.claude/strata.json), PYI_TUNNEL (1),
+# PYI_TUNNEL_PORT (18000), PYI_HOST (ubuntu), MAX_STALLS (3),
 # MAX_ATTEMPTS (40), MAX_NUDGES (5), MAX_GPU_WINDOWS (15), ERROR_PAUSE (60),
 # PYI_RUNNER_NOTIFY=0 per niente notifiche di macOS; per Strata e il PC vedi
 # tools/gpu-window.sh (PYI_STRATA_START, PYI_HOST, ...).
@@ -58,6 +69,14 @@ MAX_NUDGES=${MAX_NUDGES:-5}
 MAX_GPU_WINDOWS=${MAX_GPU_WINDOWS:-15}
 ERROR_PAUSE=${ERROR_PAUSE:-60}
 NOTIFY=${PYI_RUNNER_NOTIFY:-1}
+HOST=${PYI_HOST:-ubuntu}
+TUNNEL=${PYI_TUNNEL:-1}
+TUNNEL_PORT=${PYI_TUNNEL_PORT:-18000}
+TUNNEL_SETTINGS=$LOGDIR/settings-tunnel.json
+TUNNEL_TARGET=""   # host:porta di Strata, visto dal PC
+TUNNEL_URL=""      # indirizzo di Strata per Claude CLI, attraverso il tunnel
+TUNNEL_PID=""
+CLAUDE_SETTINGS=$SETTINGS   # il profilo che riceve Claude CLI
 CHECKPOINTS=" 6 17 21 26 28 "
 LAST_SECTION=28
 
@@ -193,6 +212,33 @@ if last and not last.get("is_error") and last.get("subtype") == "success" \
 PY
 )
 
+# Copia del profilo con ANTHROPIC_BASE_URL su 127.0.0.1:PORTA (permessi 600:
+# contiene il token). Stampa "host:porta-di-Strata nuovo-indirizzo".
+TUNNEL_PY=$(cat <<'PY'
+import json, os, sys
+from urllib.parse import urlsplit, urlunsplit
+src, dst, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
+d = json.load(open(src, encoding="utf-8"))
+env = d.setdefault("env", {})
+url = env.get("ANTHROPIC_BASE_URL") or "http://192.168.1.200:8000"
+u = urlsplit(url)
+if u.scheme != "http" or not u.hostname:
+    sys.exit("il tunnel serve un ANTHROPIC_BASE_URL http://HOST:PORTA, il profilo ha %s" % url)
+target = "%s:%d" % (u.hostname, u.port or 80)
+new = urlunsplit(("http", "127.0.0.1:%d" % port, u.path.rstrip("/"), "", ""))
+env["ANTHROPIC_BASE_URL"] = new
+tmp = dst + ".tmp"
+try:
+    os.unlink(tmp)
+except FileNotFoundError:
+    pass
+with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w", encoding="utf-8") as f:
+    json.dump(d, f, indent=2)
+os.replace(tmp, dst)
+print(target, new)
+PY
+)
+
 say()    { printf '%s [runner] %s\n' "$(date +%H:%M:%S)" "$*"; }
 notify() {
   [ "$NOTIFY" = 1 ] || return 0
@@ -308,8 +354,54 @@ per_step() {
 # Impronta del working tree: cambia se l'agente ha modificato file.
 tree_sig() { { git status --porcelain; git diff HEAD; } 2>/dev/null | shasum | cut -c1-40; }
 
+# Apre il tunnel ssh e aspetta che la porta locale sia in ascolto.
+tunnel_start() {
+  local i
+  if [ -n "$TUNNEL_PID" ]; then kill "$TUNNEL_PID" 2>/dev/null; wait "$TUNNEL_PID" 2>/dev/null; fi
+  TUNNEL_PID=""
+  # un tunnel rimasto da un runner chiuso male tiene occupata la porta
+  pkill -f -- "-L 127.0.0.1:$TUNNEL_PORT:$TUNNEL_TARGET" 2>/dev/null && sleep 1
+  # Connessione sua, non quella condivisa (ControlMaster): il tunnel vive e
+  # muore con questo processo. Se ssh dice che la chiave del PC è cambiata,
+  # disattiva il port forwarding e il tunnel non parte (vedi tunnel.log).
+  ssh -N -o BatchMode=yes -o ControlMaster=no -o ControlPath=none \
+      -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+      -L "127.0.0.1:$TUNNEL_PORT:$TUNNEL_TARGET" "$HOST" \
+      </dev/null >>"$LOGDIR/tunnel.log" 2>&1 &
+  TUNNEL_PID=$!
+  for i in $(seq 40); do
+    kill -0 "$TUNNEL_PID" 2>/dev/null || { TUNNEL_PID=""; return 1; }
+    # curl esce con 7 finché la porta locale è chiusa
+    curl -s -m 2 -o /dev/null "$TUNNEL_URL/health"
+    [ $? = 7 ] || return 0
+    sleep 0.5
+  done
+  return 1
+}
+
+# Il tunnel c'è e Strata risponde attraverso di esso; se no lo riapre (una volta).
+ensure_tunnel() {
+  [ "$TUNNEL" = 1 ] || return 0
+  local code try
+  for try in 1 2; do
+    if [ -z "$TUNNEL_PID" ] || ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
+      [ -z "$TUNNEL_PID" ] || say "il tunnel ssh verso Strata si è chiuso: lo riapro"
+      tunnel_start || { say "il tunnel ssh non parte (vedi $LOGDIR/tunnel.log)"; continue; }
+    fi
+    code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$TUNNEL_URL/health")
+    [ "$code" = 200 ] && return 0
+    say "Strata non risponde attraverso il tunnel (HTTP $code): riapro il tunnel"
+    kill "$TUNNEL_PID" 2>/dev/null; wait "$TUNNEL_PID" 2>/dev/null; TUNNEL_PID=""
+  done
+  if grep -q 'REMOTE HOST IDENTIFICATION HAS CHANGED' "$LOGDIR/tunnel.log" 2>/dev/null; then
+    stop "il tunnel ssh non parte: ssh dice che la chiave del PC non è quella in ~/.ssh/known_hosts e blocca il port forwarding. Se il PC è stato reinstallato, aggiorna la chiave (piano, Parte 1.6), poi rilancia"
+  fi
+  stop "il tunnel ssh verso Strata ($TUNNEL_URL → $TUNNEL_TARGET via $HOST) non funziona: vedi $LOGDIR/tunnel.log (senza tunnel: PYI_TUNNEL=0)"
+}
+
 ensure_llm() {
   "$TOOLS/gpu-window.sh" strata-start || stop "Strata non risponde e non riparte (vedi ~/.cache/pynference-strata.log sul PC)"
+  ensure_tunnel
 }
 
 gpu_window() { # $1 = sezione
@@ -333,7 +425,7 @@ run_claude() { # $1 = numero della sezione, $2 = prompt, $3 = sessione da contin
   say "S$1: avvio Claude CLI (log completo: $log)"
   # Se il riassunto si interrompe, cat consuma il resto: claude non deve
   # ricevere SIGPIPE e morire a metà sezione.
-  printf '%s\n' "$2" | claude -p --settings "$SETTINGS" ${resume[@]+"${resume[@]}"} \
+  printf '%s\n' "$2" | claude -p --settings "$CLAUDE_SETTINGS" ${resume[@]+"${resume[@]}"} \
       --permission-mode acceptEdits --permission-prompts none \
       --allowedTools "${ALLOW[@]}" --disallowedTools "${DENY[@]}" \
       --output-format stream-json --verbose \
@@ -357,12 +449,17 @@ if [ "${1:-}" = --status ]; then
   done
   exit 0
 fi
-if [ $# -lt 1 ] || [ $# -gt 2 ]; then
-  sed -n '2,42p' "$0"; exit 2
+CHECK=0
+if [ "${1:-}" = --check ] && [ $# = 1 ]; then
+  CHECK=1
+else
+  if [ $# -lt 1 ] || [ $# -gt 2 ]; then
+    sed -n '2,/^$/p' "$0"; exit 2
+  fi
+  start=$(parse_section "$1") || exit 1
+  end=$(parse_section "${2:-S$LAST_SECTION}") || exit 1
+  [ "$start" -le "$end" ] || stop "S$start viene dopo S$end"
 fi
-start=$(parse_section "$1") || exit 1
-end=$(parse_section "${2:-S$LAST_SECTION}") || exit 1
-[ "$start" -le "$end" ] || stop "S$start viene dopo S$end"
 
 # Variabili ereditate da un'altra sessione di Claude (per esempio il terminale
 # dell'app desktop) prevalgono sul profilo: le togliamo, così server e modello
@@ -378,18 +475,43 @@ command -v claude >/dev/null || stop "claude non è nel PATH"
 if pgrep -f -- "--settings $SETTINGS" >/dev/null 2>&1; then
   stop "c'è già una sessione di Claude CLI con $SETTINGS: chiudila prima"
 fi
-ssh -o BatchMode=yes -o ConnectTimeout=10 "${PYI_HOST:-ubuntu}" true 2>/dev/null \
-  || stop "il PC (${PYI_HOST:-ubuntu}) non risponde via ssh"
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST" true 2>/dev/null \
+  || stop "il PC ($HOST) non risponde via ssh"
 
 mkdir -p "$LOGDIR"
 mkdir "$LOGDIR/lock" 2>/dev/null \
   || stop "c'è già un run-sections.sh in corso (se non è vero: rmdir $LOGDIR/lock)"
-trap 'rmdir "$LOGDIR/lock" 2>/dev/null' EXIT
+cleanup() {
+  if [ -n "$TUNNEL_PID" ]; then kill "$TUNNEL_PID" 2>/dev/null; fi
+  [ "$TUNNEL" != 1 ] || rm -f "$TUNNEL_SETTINGS" "$TUNNEL_SETTINGS.tmp"
+  rmdir "$LOGDIR/lock" 2>/dev/null
+}
+trap cleanup EXIT
 caffeinate -i -w $$ >/dev/null 2>&1 &   # il Mac non va in stop finché lo script gira
+
+if [ "$TUNNEL" = 1 ]; then
+  : > "$LOGDIR/tunnel.log"
+  out=$(python3 -I -X utf8 -c "$TUNNEL_PY" "$SETTINGS" "$TUNNEL_SETTINGS" "$TUNNEL_PORT" 2>&1) \
+    || stop "non riesco a preparare il profilo per il tunnel: $out (senza tunnel: PYI_TUNNEL=0)"
+  TUNNEL_TARGET=${out%% *}
+  TUNNEL_URL=${out#* }
+  CLAUDE_SETTINGS=$TUNNEL_SETTINGS
+fi
+
+if [ "$CHECK" = 1 ]; then
+  ensure_llm
+  say "Strata risponde${TUNNEL_URL:+, anche attraverso il tunnel ($TUNNEL_URL → $TUNNEL_TARGET via $HOST)}"
+  say "risposta di prova di Claude CLI (fino a qualche minuto se non raggiunge il server) ..."
+  reply=$(claude -p --settings "$CLAUDE_SETTINGS" --max-turns 1 "Rispondi solo con la parola: ok" 2>&1 </dev/null)
+  rc=$?
+  say "Claude CLI (exit $rc): $(printf '%s' "$reply" | tr '\n' ' ' | cut -c1-200)"
+  [ "$rc" = 0 ] && exit 0
+  exit 1
+fi
 
 # --- Sezioni --------------------------------------------------------------
 
-say "Sezioni S${start}–S${end}, branch $BRANCH, profilo $SETTINGS"
+say "Sezioni S${start}–S${end}, branch $BRANCH, profilo $SETTINGS${TUNNEL_URL:+ (Claude CLI via tunnel ssh: $TUNNEL_URL)}"
 for n in $(seq "$start" "$end"); do
   st=$(status_of "$n")
   case $st in Completata*) say "S$n è già completata: la salto"; continue ;; esac
