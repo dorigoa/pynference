@@ -38,11 +38,11 @@ REAL = [
 ]
 REL_TOL = 1e-4
 # per-type GEMV floor, bytes read / s on 8192x5376. The plan sets no bandwidth
-# contract (the card only asks to measure; C9 goals are non-blocking), so this
-# first pass keeps a deliberately low floor that only catches real regressions;
-# job S11-1 reports the measured values (RES ... gbps=) and the floors are
-# then fixed per type, as done in S10 after jobs S10-1/2/3.
-MIN_GBPS = {q: 40.0 for q in KTYPES}
+# contract (the card only asks to measure; C9 goals are non-blocking), so these
+# just catch real regressions. Job S11-3 measured (RES ... gbps=): MXFP4 145.1,
+# IQ4_XS 105.2, Q2_0 110.8 — floors set ~10-15% under the measurements (S10
+# pattern).
+MIN_GBPS = {"MXFP4": 120.0, "IQ4_XS": 90.0, "Q2_0": 100.0}
 
 
 def _native(qtype, raw, n, k):
