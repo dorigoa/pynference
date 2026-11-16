@@ -58,7 +58,7 @@ def _decode(RAW8, RAWI, W16, off8, b, e, RB16,
     if Q8_0:
         q = tl.load(RAWI + off8 + b * BB + QS + e).to(tl.float32)
         return q * d
-    byte = tl.load(RAW8 + off8 + b * BB + QS + (e % 16) // 2).to(tl.int32)
+    byte = tl.load(RAW8 + off8 + b * BB + QS + (e % 16)).to(tl.int32)
     nib = (byte >> tl.where(e >= 16, 4, 0)) & 0x0F
     if HAS_QH:
         lo = tl.load(W16 + off16 + b * WPB + QHW).to(tl.uint32)
@@ -110,7 +110,12 @@ _GEMV_CONFIGS = [triton.Config({"BLOCK_N": bn, "BLOCK_K": bk}, num_warps=nw)
                                     (16, 256, 4), (16, 512, 8), (32, 256, 8)]]
 
 
-@triton.autotune(configs=_GEMV_CONFIGS, key=["N", "K"])
+# the type constexprs must be in the autotune key: the same (N, K) shape is
+# benchmarked with different configs for the nibble types vs Q5_0 vs Q8_0
+_GEMV_KEY = ["N", "K", "Q8_0", "HAS_M", "HAS_QH", "IQ4", "BB"]
+
+
+@triton.autotune(configs=_GEMV_CONFIGS, key=_GEMV_KEY)
 @triton.jit
 def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
                  Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
@@ -132,7 +137,7 @@ def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
     tl.store(Y + rn, acc, mask=nm)
 
 
-@triton.autotune(configs=_GEMV_CONFIGS, key=["N", "K"])
+@triton.autotune(configs=_GEMV_CONFIGS, key=_GEMV_KEY)
 @triton.jit
 def _gemv_indexed_kernel(RAW8, RAWI, W16, X, SLOTS, OUT, N, K, RB8, RB16, SLOT_BYTES,
                          Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,

@@ -36,7 +36,7 @@ MIN_GBPS = 100.0
 
 
 def _native(qtype, raw, n, k):
-    dev = torch.from_numpy(np.ascontiguousarray(raw)).to(DEV)
+    dev = torch.from_numpy(np.ascontiguousarray(raw).copy()).to(DEV)
     return NativeQWeight(qtype, dev.view(n, row_bytes(qtype, k)), n, k)
 
 
@@ -93,10 +93,12 @@ def test_real_tensor(qtype, path):
     if not os.path.exists(path):
         pytest.skip(f"{path} not present")
     f = GGUFFile(path)
+    # Q5_0 in Flash-Next appears only on 3D expert tensors (n_experts, n, k):
+    # its 2D "rows" are the flattened view, which is what f.rows returns too
     info = next((t for t in f.tensors.values()
-                 if t.type == qtype and len(t.shape) == 2), None)
+                 if t.type == qtype and len(t.shape) in (2, 3)), None)
     if info is None:
-        pytest.skip(f"no real 2D {qtype} tensor in {path}")
+        pytest.skip(f"no real {qtype} tensor in {path}")
     n, k = min(256, info.n_rows), info.shape[0]
     raw = f.rows(info.name, 0, n)
     ref = torch.from_numpy(ref_dequant(raw, qtype)).to(DEV)
