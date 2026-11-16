@@ -252,10 +252,8 @@ def test_bench_seeds_route_unambiguously_and_raw_is_deterministic():
     mc = _load_bench()
     assert [c[0] for c in mc.CFGS] == ["Q8_0", "MXFP4", "IQ4_XS"]
     for qi, (qtype, k, ffn, _act) in enumerate(mc.CFGS):
-        rng = np.random.default_rng(7777 + qi)  # same draw order as the bench
-        router = rng.standard_normal((mc.N_EXPERTS, k)).astype(np.float32)
-        bias = (0.3 * rng.standard_normal(mc.N_EXPERTS)).astype(np.float32)
-        toks = (0.3 * rng.standard_normal((32, k))).astype(np.float32)
+        # data from the bench itself (incl. per-type token scaling)
+        router, bias, toks, _bw = mc.make_data(qi, qtype, k, ffn, 32, 4)
         idx, w = mc.route(toks, router, bias)  # asserts a safe 4th-vs-5th margin
         assert idx.shape == (32, mc.TOP_K)
         assert w.sum(1).max() < 1.0 + 1e-5

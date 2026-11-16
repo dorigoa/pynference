@@ -1,0 +1,62 @@
+== start 20:28:02
+== moe_check exit 1 (20:28:39)
+RES rank0 Q8_0   decode                 rel=2.22e-06 tol=5e-04 OK
+RES rank0 Q8_0   prefill                rel=4.93e-03 tol=3e-02 OK
+RES rank0 Q8_0   decode zero-vs-full    rel=1.43e-06 tol=1e-05 OK
+RES rank0 Q8_0   prefill zero-vs-full   rel=1.69e-06 tol=1e-05 OK
+RES rank0 Q8_0   rank agreement         rel=0.00e+00 tol=1e-05 OK
+RES rank1 Q8_0   decode                 rel=2.22e-06 tol=5e-04 OK
+RES rank1 Q8_0   prefill                rel=4.93e-03 tol=3e-02 OK
+RES rank1 Q8_0   decode zero-vs-full    rel=1.43e-06 tol=1e-05 OK
+RES rank1 Q8_0   prefill zero-vs-full   rel=1.69e-06 tol=1e-05 OK
+RES rank1 Q8_0   rank agreement         rel=0.00e+00 tol=1e-05 OK
+RES rank0 Q8_0 miss bw 9.12 GB/s (3331 MB in 0.37 s, 126 misses, 9 hits)
+RES rank1 Q8_0 miss bw 7.90 GB/s (2882 MB in 0.36 s, 109 misses, 12 hits)
+RES rank0 MXFP4  decode                 rel=5.30e-05 tol=5e-04 OK
+RES rank0 MXFP4  prefill                rel=9.85e-02 tol=3e-02 FAIL
+RES rank0 MXFP4  decode zero-vs-full    rel=1.12e-06 tol=1e-05 OK
+RES rank0 MXFP4  prefill zero-vs-full   rel=2.83e-06 tol=1e-05 OK
+RES rank0 MXFP4  rank agreement         rel=0.00e+00 tol=1e-05 OK
+RES rank1 MXFP4  decode                 rel=5.30e-05 tol=5e-04 OK
+RES rank1 MXFP4  prefill                rel=9.85e-02 tol=3e-02 FAIL
+RES rank1 MXFP4  decode zero-vs-full    rel=1.12e-06 tol=1e-05 OK
+RES rank1 MXFP4  prefill zero-vs-full   rel=2.83e-06 tol=1e-05 OK
+RES rank1 MXFP4  rank agreement         rel=0.00e+00 tol=1e-05 OK
+RES rank1 IQ4_XS decode                 rel=2.28e-06 tol=5e-04 OK
+RES rank1 IQ4_XS prefill                rel=5.05e-03 tol=3e-02 OK
+RES rank1 IQ4_XS decode zero-vs-full    rel=1.50e-06 tol=1e-05 OK
+RES rank1 IQ4_XS prefill zero-vs-full   rel=2.26e-06 tol=1e-05 OK
+RES rank1 IQ4_XS rank agreement         rel=0.00e+00 tol=1e-05 OK
+RES rank0 IQ4_XS decode                 rel=2.28e-06 tol=5e-04 OK
+RES rank0 IQ4_XS prefill                rel=5.05e-03 tol=3e-02 OK
+RES rank0 IQ4_XS decode zero-vs-full    rel=1.50e-06 tol=1e-05 OK
+RES rank0 IQ4_XS prefill zero-vs-full   rel=2.26e-06 tol=1e-05 OK
+RES rank0 IQ4_XS rank agreement         rel=0.00e+00 tol=1e-05 OK
+FAIL rank1: ['MXFP4 prefill']FAIL rank0: ['MXFP4 prefill']
+Traceback (most recent call last):
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+== pytest gpu exit 0 (20:31:11)
+........................................................................ [ 67%]
+...................................                                      [100%]
+107 passed, 1 skipped in 151.14s (0:02:31)
+== regress exit 0 (20:32:59)
+== regress gemma4: ours --ref (graph) 20:31:11
+  loaded 50/60 layers (23s)
+  loaded 60/60 layers (28s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (20:32:01)
+== regress gemma4: ppl 20:32:01
+== ppl exit 0 (20:32:59)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 11.8s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 20:32:59

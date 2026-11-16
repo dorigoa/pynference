@@ -13,6 +13,7 @@ run also measures the H2D miss bandwidth from the store's byte counters.
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -35,6 +36,29 @@ CFGS = [("Q8_0", 2880, 2880, "swiglu"),
 PROJ = {"gate": 0, "up": 1, "down": 2}
 E_SHARED = 100  # raw bytes source for the shared expert (not a routed id)
 DECODE_TOL, PREFILL_TOL, BUDGET_TOL, RANK_TOL = 5e-4, 3e-2, 1e-5, 1e-5
+ACT_STD = 5.0  # target pre-clip gate/up std: swiglu_oai's operating range (±7)
+
+
+def make_data(qi, qtype, k, ffn, tokens_n, bw_tokens):
+    """Router/bias/tokens/bw-token arrays, identical on every rank.
+
+    Token std is scaled per type so the pre-clip gate/up std is ~ACT_STD:
+    synthetic MXFP4 weights are heavy-tailed (E8M0 exponents span 2^±10,
+    rms_w ~ 1.5e3), so unscaled gate/up would hit ~±2e4 and swiglu_oai would
+    saturate at its ±7 limit everywhere; bf16 prefill rounding then flips
+    values near zero and diverges ~0.1 from f32 (job S15-3). The router is
+    divided by the same factor, so router logits (and the top-k margin) are
+    unchanged; the bias keeps its size relative to the logits.
+    """
+    rng = np.random.default_rng(7777 + qi)
+    router = rng.standard_normal((N_EXPERTS, k)).astype(np.float32)
+    bias = (0.3 * rng.standard_normal(N_EXPERTS)).astype(np.float32)
+    tokens = (0.3 * rng.standard_normal((tokens_n, k))).astype(np.float32)
+    bw = (0.3 * rng.standard_normal((bw_tokens, k))).astype(np.float32)
+    g = ref_dequant(raw_bytes(qi, qtype, k, ffn, 0, "gate"), qtype)
+    rms_w = float(np.sqrt(np.square(g).mean()))
+    s = ACT_STD / (0.3 * math.sqrt(k) * rms_w)
+    return router / s, bias, (tokens * s).astype(np.float32), (bw * s).astype(np.float32)
 
 
 def raw_bytes(qi, qtype, k, ffn, e, name):
@@ -104,11 +128,8 @@ def main():
     tp = TP()
     fails = []
     for qi, (qtype, k, ffn, act_name) in enumerate(CFGS):
-        rng = np.random.default_rng(7777 + qi)  # same on every rank
-        router_np = rng.standard_normal((N_EXPERTS, k)).astype(np.float32)
-        bias_np = (0.3 * rng.standard_normal(N_EXPERTS)).astype(np.float32)
-        tokens_np = (0.3 * rng.standard_normal((args.tokens, k))).astype(np.float32)
-        bw_np = (0.3 * rng.standard_normal((args.bw_tokens, k))).astype(np.float32)
+        router_np, bias_np, tokens_np, bw_np = make_data(
+            qi, qtype, k, ffn, args.tokens, args.bw_tokens)  # same on every rank
 
         def raw(e, name, qi=qi, qtype=qtype, k=k, ffn=ffn):
             return raw_bytes(qi, qtype, k, ffn, e, name)
