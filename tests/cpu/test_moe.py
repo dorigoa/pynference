@@ -89,6 +89,12 @@ def test_slotmap_two_misses_never_share_a_slot():
     assert [e for e, _ in miss] == [7, 8, 9]
 
 
+def test_slotmap_too_many_fresh_misses():
+    m = SlotMap([], swap_slots=1)
+    with pytest.raises(ValueError, match="swap slots"):
+        m.resolve([1, 2])
+
+
 def test_slotmap_resident_never_evicted():
     m = SlotMap(resident_ids=[0], swap_slots=1)
     for e in range(10):

@@ -131,8 +131,12 @@ class SlotMap:
                     self._now += 1
                 slots.append(s)
                 continue
-            v = min((s for s in range(self.R, self.S) if s not in fresh),
-                    key=lambda s: self.ts[s])
+            cands = [s for s in range(self.R, self.S) if s not in fresh]
+            if not cands:
+                raise ValueError(
+                    f"cannot load {len(fresh) + 1} new experts at once: "
+                    f"only {self.S - self.R} swap slots")
+            v = min(cands, key=lambda s: self.ts[s])
             if self.expert[v] >= 0:
                 del self.slot[self.expert[v]]
             self.expert[v] = e
@@ -226,3 +230,126 @@ def group_by_expert(ids: list[list[int]], weights: list[list[float]],
                 acc[int(e)][1].append(float(w))
     return {e: (np.asarray(rows, dtype=np.int64), np.asarray(w, dtype=np.float32))
             for e, (rows, w) in sorted(acc.items())}
+
+
+# ------------------------------------------------------------- expert store (GPU)
+
+class ExpertStore:
+    """Resident expert buffers + LRU swap on one GPU (C5).
+
+    `g` carries `.groups: list[ExpertGroup]`, one per (layer, projection).
+    Each group gets a `[S, N, row_bytes]` uint8 buffer in the native GGUF
+    layout, copied from RAM byte for byte: slots `[0, R)` hold the resident
+    local experts, slots `[R, S)` are the LRU swap area. Slot numbering is
+    shared across a layer's projections (triples move together), so
+    `resolve(layer, ids)` yields one int32 tensor that `gemv_indexed` (C2)
+    can feed to every projection of the layer. Non-resident local experts
+    live in pinned host memory (`HostPool`). `resolve` copies misses in on
+    a side stream and makes the current stream wait on the copy event, so
+    kernels launched after it see fresh bytes; `stats()` reports hits,
+    misses and copied bytes.
+    """
+
+    def __init__(self, g, tp, budget_bytes: int, swap_slots: int = 2):
+        groups = list(getattr(g, "groups", g))
+        if not groups:
+            raise ValueError("ExpertStore: no expert groups")
+        self.tp = tp
+        self.layers: dict[int, dict[str, ExpertGroup]] = {}
+        for gr in groups:
+            lay = self.layers.setdefault(gr.layer, {})
+            if gr.name in lay:
+                raise ValueError(f"duplicate expert group layer={gr.layer} name={gr.name}")
+            lay[gr.name] = gr
+
+        self.local_ids: dict[int, list[int]] = {}
+        self.triple_bytes: dict[int, int] = {}
+        triples = []
+        layers_sorted = sorted(self.layers)
+        n_locals = set()
+        for layer in layers_sorted:
+            lay = self.layers[layer]
+            n_experts = {gr.n_experts for gr in lay.values()}
+            if len(n_experts) != 1:
+                raise ValueError(f"layer {layer}: projections disagree on n_experts")
+            loc = local_experts(n_experts.pop(), tp.rank, tp.world)
+            self.local_ids[layer] = loc
+            n_locals.add(len(loc))
+            self.triple_bytes[layer] = sum(gr.slot_bytes for gr in lay.values())
+            triples.append(self.triple_bytes[layer])
+        if len(n_locals) != 1:
+            raise ValueError("ExpertStore: all layers must have the same local expert count")
+
+        R, X = plan_residency(triples, n_locals.pop(), budget_bytes, swap_slots)
+        self.bufs: dict[int, dict[str, torch.Tensor]] = {}
+        self.pools: dict[tuple[int, str], HostPool] = {}
+        self.maps: dict[int, SlotMap] = {}
+        pinned = 0
+        for i, layer in enumerate(layers_sorted):
+            resident = self.local_ids[layer][:R[i]]
+            rest = [e for e in self.local_ids[layer][R[i]:]]
+            self.maps[layer] = SlotMap(resident, X[i])
+            bufs = {}
+            for name, gr in self.layers[layer].items():
+                rb = row_bytes(gr.qtype, gr.k)
+                buf = torch.empty(self.maps[layer].S, gr.n, rb,
+                                  dtype=torch.uint8, device=tp.device)
+                if resident:
+                    rows = np.stack([gr.expert_bytes(e) for e in resident])
+                    buf[:R[i]].copy_(torch.from_numpy(rows).view(R[i], gr.n, rb))
+                bufs[name] = buf
+                pool = HostPool(gr, rest)
+                pool.fill()
+                pinned += pool.nbytes
+                self.pools[layer, name] = pool
+            self.bufs[layer] = bufs
+        if pinned > PINNED_LIMIT_BYTES:
+            raise ValueError(f"pinned RAM {pinned} B exceeds the C5 limit {PINNED_LIMIT_BYTES}")
+        self._pinned = pinned
+        self._side = torch.xpu.Stream(tp.device)
+        self._ev = torch.xpu.Event()
+        self.hits = self.misses = 0
+        self.bytes_copied = 0
+
+    def resolve(self, layer: int, ids: list[int]) -> torch.Tensor:
+        """Device int32 slots for local expert ids (valid for every
+        projection of the layer). Missing experts are copied in first; the
+        ids arrive on the host because decode does its top-k there (C5)."""
+        local = self.local_ids[layer]
+        for e in ids:
+            if e not in local:
+                raise ValueError(f"expert {e} is not owned by rank {self.tp.rank}")
+        slots, misses = self.maps[layer].resolve(list(ids))
+        self.hits += len(ids) - len(misses)
+        if misses:
+            self.misses += len(misses)
+            self.bytes_copied += self.triple_bytes[layer] * len(misses)
+            self._copy_misses(layer, misses)
+        return torch.tensor(slots, dtype=torch.int32, device=self.tp.device)
+
+    def _copy_misses(self, layer: int, misses: list[tuple[int, int]]) -> None:
+        cur = torch.xpu.current_stream()
+        # the side stream must not overwrite a slot a queued kernel may read
+        self._side.wait_stream(cur)
+        with torch.xpu.stream(self._side):
+            for e, slot in misses:
+                for name, buf in self.bufs[layer].items():
+                    pool = self.pools[layer, name]
+                    src = pool.buf.view(-1, pool.group.slot_bytes)[pool.row[e]]
+                    buf[slot].reshape(-1).copy_(src, non_blocking=True)
+            self._ev.record(self._side)
+        cur.wait_event(self._ev)
+
+    def stats(self) -> dict:
+        return {"hits": self.hits, "misses": self.misses, "bytes": self.bytes_copied}
+
+    def reset_stats(self) -> None:
+        self.hits = self.misses = 0
+        self.bytes_copied = 0
+
+    def memory_bytes(self) -> int:
+        """Expert bytes on this GPU (resident + swap), for memory_report (C3)."""
+        return sum(b.numel() for lay in self.bufs.values() for b in lay.values())
+
+    def pinned_bytes(self) -> int:
+        return self._pinned
