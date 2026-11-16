@@ -197,16 +197,12 @@ def _dequant_kernel(RAW8, RAWI, W16, OUT, IDX, M, K, RB8, RB16,
 
 # 16-warp and BLOCK_K=1024 configs added for S10: the 2-bit Q2_K GEMV is
 # compute-bound (3.05 elements/byte, its 14.5 MB working set fits in L2),
-# so more warps and a wider k-tile help where the nibble types do not need them;
-# num_stages=2 variants (S10 step 5) cut register pressure for the same case
+# so more warps and a wider k-tile help where the nibble types do not need them
 _GEMV_CONFIGS = [triton.Config({"BLOCK_N": bn, "BLOCK_K": bk}, num_warps=nw)
                  for bn, bk, nw in [(4, 512, 4), (8, 256, 4), (8, 512, 4), (8, 512, 8),
                                     (16, 256, 4), (16, 512, 8), (32, 256, 8),
                                     (4, 1024, 8), (8, 1024, 8), (8, 1024, 16),
-                                    (16, 512, 16), (16, 1024, 16), (32, 512, 16)]] + [
-    triton.Config({"BLOCK_N": 8, "BLOCK_K": 1024}, num_warps=8, num_stages=2),
-    triton.Config({"BLOCK_N": 8, "BLOCK_K": 1024}, num_warps=16, num_stages=2),
-    triton.Config({"BLOCK_N": 16, "BLOCK_K": 1024}, num_warps=16, num_stages=2)]
+                                    (16, 512, 16), (16, 1024, 16), (32, 512, 16)]]
 
 
 # the type constexprs must be in the autotune key: the same (N, K) shape is
@@ -231,17 +227,11 @@ def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
         rk = k0 + tl.arange(0, BLOCK_K)
         mk = rk < K
         x = tl.load(X + rk, mask=mk, other=0.0)
-        # clamp the k-tail into the row instead of masking w per element: the
-        # weight loads then stay inside the row (before, a tail block of the
-        # last row read past the buffer, and a NaN/Inf scale in that garbage
-        # could poison acc through 0.0 * inf), and the sum drops one select
-        # per element (the Q2_K GEMV is instruction-bound, see S10)
-        rk = tl.where(mk, rk, K - 1)
         b = (rk // BS)[None, :]
         e = (rk % BS)[None, :]
         w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, BB, WPB, QS, MS,
                     QHB, KQ, DW, DMW, SCL, HMB)
-        acc += tl.sum(w * x[None, :], axis=1)
+        acc += tl.sum(tl.where(nm[:, None] & mk[None, :], w, 0.0) * x[None, :], axis=1)
     tl.store(Y + rn, acc, mask=nm)
 
 
@@ -267,12 +257,11 @@ def _gemv_indexed_kernel(RAW8, RAWI, W16, X, SLOTS, OUT, N, K, RB8, RB16, SLOT_B
         rk = k0 + tl.arange(0, BLOCK_K)
         mk = rk < K
         x = tl.load(X + re.to(tl.int64) * K + rk, mask=mk, other=0.0)
-        rk = tl.where(mk, rk, K - 1)  # clamp like in _gemv_kernel
         b = (rk // BS)[None, :]
         e = (rk % BS)[None, :]
         w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, BB, WPB, QS, MS,
                     QHB, KQ, DW, DMW, SCL, HMB)
-        acc += tl.sum(w * x[None, :], axis=1)
+        acc += tl.sum(tl.where(mk[None, :], w, 0.0) * x[None, :], axis=1)
     tl.store(OUT + re.to(tl.int64) * N + rn, acc, mask=mr)
 
 
