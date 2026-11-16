@@ -19,9 +19,14 @@ Endpoints:
 Parameters: `messages`, `max_tokens`/`max_completion_tokens`, `temperature`,
 `top_p`, `top_k`, `min_p`, `seed`, `stop` (string or list), `stream`.
 Sampling defaults come from the GGUF (as in cli/generate); a request overrides
-what it sets. The prompt is the model's chat format built by
-`tokenizer.chat_prompt`, tokenized exactly like `pynference.generate --chat`,
-so a greedy request matches `cli generate` on the same prompt.
+what it sets. The prompt is the model's chat format: Gemma 4 uses
+`tokenizer.chat_prompt` tokenized exactly like `pynference.generate --chat`,
+so a greedy request matches `cli generate` on the same prompt; byte-level BPE
+models (GPT-OSS, Qwen) use the GGUF's own `tokenizer.chat_template` through
+`chat.render`. When the family separates reasoning from the answer
+(`chat.ReasoningSplitter`), the reasoning goes in `reasoning_content`
+(streaming: `delta.reasoning_content`; stop strings cut the visible text
+only).
 Unknown paths give 404, bad requests 400, both with an OpenAI-style JSON
 error body. If a streaming client disappears mid-generation the text is
 dropped but the generation runs to the end: the ranks must stay in lockstep.
@@ -39,11 +44,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import torch
 
+from .chat import ReasoningSplitter, render as render_chat
 from .engine import Engine
 from .gguf import GGUFFile
 from .models import load_model
 from .parallel import TP
-from .tokenizer import Tokenizer, chat_prompt
+from .tokenizer import Tokenizer, chat_prompt, load_tokenizer
 
 CREATED = int(time.time())
 
@@ -130,6 +136,33 @@ def _unflushable_len(text: str, stop_strings) -> int:
         if any(s.startswith(tail) and len(tail) < len(s) for s in stop_strings):
             return L
     return 0
+
+
+class _RawStreamDecoder:
+    """`tokenizer.StreamDecoder` with `special=True` over a tokenizer-like:
+    yields the text of each token verbatim, special tokens included, so the
+    reasoning splitter sees the channel/think tags."""
+
+    def __init__(self, tok):
+        self.tok, self.buf = tok, ""
+
+    def push(self, tid: int) -> str:
+        self.buf += self.tok.token_bytes(tid, special=True).decode("utf-8", "replace")
+        out, self.buf = self.buf, ""
+        return out
+
+
+def _split_response(tok, generated: list[int]) -> tuple[str, str, str]:
+    """(visible content, reasoning, raw text) of an answer, separated per
+    family by `ReasoningSplitter` (raw text unchanged for other families).
+    Stop strings are not handled here: the engine already trimmed them."""
+    sp = ReasoningSplitter.from_tokenizer(tok)
+    if sp is None:
+        text = tok.decode(generated)          # special tokens stripped, as before
+        return text, "", text
+    text = tok.decode(generated, special=True)
+    reasoning, content = sp.split_all(text)
+    return content, reasoning, text
 
 
 class PynferenceServer:
@@ -240,24 +273,68 @@ class PynferenceServer:
 
                 sse(chunk({"role": "assistant", "content": ""}, None))
 
-                def on_token(tid: int, _text: str) -> None:
-                    acc.append(tid)
-                    cut = _stop_cut(outer.tok, acc, stop_strings) if stop_strings else None
-                    if cut is not None:
-                        keep = outer.tok.decode(acc[:cut])
-                    else:
-                        keep = outer.tok.decode(acc)
-                        if stop_strings:
-                            keep = keep[:len(keep) - _unflushable_len(keep, stop_strings)]
-                    if len(keep) > sent[0]:
-                        sse(chunk({"content": keep[sent[0]:]}, None))
-                        sent[0] = len(keep)
+                splitter = ReasoningSplitter.from_tokenizer(outer.tok)
+                if splitter is None:                       # unchanged path
+
+                    def on_token(tid: int, _text: str) -> None:
+                        acc.append(tid)
+                        cut = _stop_cut(outer.tok, acc, stop_strings) if stop_strings else None
+                        if cut is not None:
+                            keep = outer.tok.decode(acc[:cut])
+                        else:
+                            keep = outer.tok.decode(acc)
+                            if stop_strings:
+                                keep = keep[:len(keep) - _unflushable_len(keep, stop_strings)]
+                        if len(keep) > sent[0]:
+                            sse(chunk({"content": keep[sent[0]:]}, None))
+                            sent[0] = len(keep)
+
+                else:                                      # reasoning separation
+                    rdec = _RawStreamDecoder(outer.tok)
+                    rtext = [""]                           # reasoning already sent
+                    ctext = [""]                           # visible text so far
+                    stop_hit = [False]                     # content reached a stop string
+
+                    def send_r(c: str) -> None:
+                        if c:
+                            rtext[0] += c
+                            sse(chunk({"reasoning_content": c}, None))
+
+                    def send_c(c: str) -> None:
+                        if stop_hit[0] or not c:
+                            return
+                        ctext[0] += c
+                        full_c = ctext[0]
+                        hits = [i for i in (full_c.find(s) for s in stop_strings) if i >= 0]
+                        cut = min(hits) if (hits and stop_strings) else -1
+                        if cut >= 0:
+                            full_c, stop_hit[0] = full_c[:cut], True
+                        elif stop_strings:
+                            full_c = full_c[:len(full_c) - _unflushable_len(full_c, stop_strings)]
+                        if len(full_c) > sent[0]:
+                            sse(chunk({"content": full_c[sent[0]:]}, None))
+                            sent[0] = len(full_c)
+
+                    def on_token(tid: int, _text: str) -> None:
+                        acc.append(tid)
+                        r, c = splitter.push(rdec.push(tid))
+                        send_r(r)
+                        send_c(c)
 
                 generated = outer.engine.run(cmd, on_token=on_token)
-                full = outer.tok.decode(generated)
                 finish = "length" if outer.engine.session.last_truncated else "stop"
-                if len(full) > sent[0]:
-                    sse(chunk({"content": full[sent[0]:]}, None))
+                if splitter is None:
+                    full = outer.tok.decode(generated)
+                    if len(full) > sent[0]:
+                        sse(chunk({"content": full[sent[0]:]}, None))
+                else:
+                    # decode the final answer with special tokens (tags in), split
+                    # it fresh, then send only what streaming did not already
+                    # flush: the streamed parts only ever grew by prefixes
+                    full = outer.tok.decode(generated, special=True)
+                    reasoning, content = ReasoningSplitter(splitter.family).split_all(full)
+                    send_r(reasoning[len(rtext[0]):])
+                    send_c(content[len(ctext[0]):])
                 sse(chunk({}, finish))
                 if not gone[0]:
                     self.wfile.write(b"data: [DONE]\n\n")
@@ -279,10 +356,14 @@ class PynferenceServer:
         cid, created = _new_id(), int(time.time())
         n = len(generated)
         self._log(cmd, prompt_tokens, n, finish, stream=False)
+        content, reasoning, _raw = _split_response(self.tok, generated)
+        message = {"role": "assistant", "content": content}
+        if reasoning:
+            message["reasoning_content"] = reasoning
         return {"id": cid, "object": "chat.completion", "created": created,
                 "model": self.model_id,
                 "choices": [{"index": 0,
-                             "message": {"role": "assistant", "content": self.tok.decode(generated)},
+                             "message": message,
                              "finish_reason": finish}],
                 "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": n,
                           "total_tokens": prompt_tokens + n}}
@@ -334,7 +415,7 @@ def main(argv=None) -> int:
     log = (lambda *a, **k: print(*a, **k, file=sys.stderr, flush=True)) if tp.is_main \
         else (lambda *a, **k: None)
     g = GGUFFile(args.model)
-    tok = Tokenizer(g)
+    tok = load_tokenizer(g)
     log(f"[pynference] {g.kv.get('general.name')} ({g.arch}), {tp.world} GPU(s)")
     model = load_model(g, tp, max_ctx=args.ctx)
     model.fast_decode = args.decode != "torch"
@@ -357,11 +438,20 @@ def main(argv=None) -> int:
                 "top_k": int(g.kv.get("general.sampling.top_k", 40)),
                 "top_p": float(g.kv.get("general.sampling.top_p", 1.0)),
                 "min_p": 0.0, "seed": args.seed, "max_tokens": args.max_tokens}
+
+    def prompt_ids(msgs):
+        if isinstance(tok, Tokenizer):          # Gemma 4: the fixed S7 format
+            return tok.encode(chat_prompt(msgs))
+        # byte-level BPE: the GGUF's own template; add_bos False because the
+        # templates already carry BOS/EOS as special tokens in the text
+        return tok.encode(render_chat(g, msgs, add_generation_prompt=True),
+                          add_bos=False)
+
     server = PynferenceServer(
         engine, tok,
         model_id=args.model.rsplit("/", 1)[-1].removesuffix(".gguf"),
         defaults=defaults,
-        prompt_ids=lambda msgs: tok.encode(chat_prompt(msgs)),
+        prompt_ids=prompt_ids,
         host=args.host, port=args.port)
     log(f"[pynference] serving on http://{args.host}:{server.port} "
         f"(model id {server.model_id!r})")

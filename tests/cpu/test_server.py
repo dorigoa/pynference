@@ -13,6 +13,7 @@ import urllib.request
 from http.client import HTTPConnection
 
 import pytest
+import torch
 from fake_model import GREEDY, FakeModel, FakeTok
 
 from pynference.engine import Engine
@@ -196,3 +197,155 @@ def test_404_on_wrong_method(srv):
     assert get(url, "/v1/chat/completions")[0] == 404
     status, _ = post(url, {"messages": [{"role": "user", "content": "3"}]})
     assert status == 200          # sanity: POST works
+
+
+# ---- reasoning separation (S14 step 6) ----
+#
+# A `pre`-carrying tokenizer makes the server split the answer per family:
+# reasoning goes to `reasoning_content` (delta while streaming, message key
+# otherwise), `content` only ever carries the visible text. Every answer
+# token is one id (`token_bytes` below), so tags arrive in one piece.
+
+LT = "\x3c"                    # first char escaped: no chat marker in sources
+REASON = "deep"
+ANSWER = "Rome."
+
+
+class SplitTok:
+    """FakeTok with a `pre`, so `ReasoningSplitter.from_tokenizer` fires;
+    TEXT maps ids to their (tag-included) text, others render as digits."""
+    bos_id, eos_id = 2, 0
+    eog_ids = {0}
+    pre = "qwen35"
+    TEXT = {}
+
+    def token_bytes(self, tid: int, special: bool = True) -> bytes:
+        return self.TEXT.get(tid, str(tid)).encode()
+
+    def decode(self, ids, special: bool = False) -> str:
+        return "".join(self.token_bytes(i, special).decode() for i in ids)
+
+
+class QwenTok(SplitTok):
+    TEXT = {1: REASON, 2: LT + "/think>", 3: "\n\n", 4: ANSWER}
+
+
+class GptOssTok(SplitTok):
+    pre = "gpt-4o"
+    TEXT = {1: LT + "|channel|>", 2: "analysis", 3: LT + "|message|>",
+            4: REASON, 5: LT + "channel|>", 6: LT + "|start|>assistant",
+            7: LT + "|channel|>", 8: "final", 9: LT + "|message|>",
+            10: ANSWER, 11: LT + "|return|>"}
+
+
+def make_split_client(text_tok, stream_ids):
+    """Server over a fake model whose next token walks `stream_ids` in order
+    (first forward = the prompt logits, then one id per decode step)."""
+    class FixedModel(FakeModel):
+        def __init__(self):
+            super().__init__()
+            self.stream, self.n_fwd = list(stream_ids), 0
+
+        def forward(self, tokens, chunk: int = 512, all_logits: bool = False):
+            self.forward_sizes.append(len(tokens))
+            self.ctx.extend(tokens)
+            self.n_past = len(self.ctx)
+            nxt = self.stream[min(self.n_fwd, len(self.stream) - 1)]
+            self.n_fwd += 1
+            logits = torch.zeros(FakeModel.n_vocab, dtype=torch.float32)
+            logits[nxt] = 2.0
+            return logits
+
+    engine = Engine(FixedModel(), text_tok)
+    server = PynferenceServer(engine, text_tok, model_id="fake",
+                              defaults=dict(GREEDY, max_tokens=64),
+                              prompt_ids=lambda msgs: [7], host="127.0.0.1", port=0)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server, f"http://127.0.0.1:{server.port}"
+
+
+def stream_parts(url, body):
+    """POST stream: returns (content, reasoning_content, finish)."""
+    hostport = url.split("//", 1)[1]
+    conn = HTTPConnection(hostport, timeout=60)
+    conn.request("POST", "/v1/chat/completions", json.dumps(body),
+                 {"Content-Type": "application/json"})
+    r = conn.getresponse()
+    assert r.status == 200, r.status
+    raw = r.read().decode()
+    conn.close()
+    events = [e[len("data: "):] for e in raw.split("\n\n") if e.startswith("data: ")]
+    assert events[-1] == "[DONE]", raw[-200:]
+    content, reasoning, finish = "", "", None
+    for e in events[:-1]:
+        c = json.loads(e)
+        d = c["choices"][0]["delta"]
+        content += d.get("content", "")
+        reasoning += d.get("reasoning_content", "")
+        if c["choices"][0]["finish_reason"]:
+            finish = c["choices"][0]["finish_reason"]
+    return content, reasoning, finish
+
+
+@pytest.fixture()
+def qwen_srv():
+    server, url = make_split_client(QwenTok(), [1, 2, 3, 4, 0])
+    yield url
+    server.stopping = True
+    server.httpd.shutdown()
+
+
+@pytest.fixture()
+def oss_srv():
+    server, url = make_split_client(GptOssTok(), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 0])
+    yield url
+    server.stopping = True
+    server.httpd.shutdown()
+
+
+def test_stream_reasoning_qwen(qwen_srv):
+    content, reasoning, finish = stream_parts(
+        qwen_srv, {"messages": [{"role": "user", "content": "x"}], "stream": True})
+    assert (content, reasoning) == ("\n\n" + ANSWER, REASON)
+    assert finish == "stop"
+
+
+def test_completion_reasoning_qwen(qwen_srv):
+    status, body = post(qwen_srv, {"messages": [{"role": "user", "content": "x"}]})
+    msg = body["choices"][0]["message"]
+    assert status == 200 and msg["content"] == "\n\n" + ANSWER
+    assert msg["reasoning_content"] == REASON
+
+
+def test_stream_reasoning_gpt_oss(oss_srv):
+    content, reasoning, finish = stream_parts(
+        oss_srv, {"messages": [{"role": "user", "content": "x"}], "stream": True})
+    assert (content, reasoning) == (ANSWER, REASON)
+    assert finish == "stop"
+
+
+def test_completion_reasoning_gpt_oss(oss_srv):
+    status, body = post(oss_srv, {"messages": [{"role": "user", "content": "x"}]})
+    msg = body["choices"][0]["message"]
+    assert status == 200 and msg["content"] == ANSWER
+    assert msg["reasoning_content"] == REASON
+
+
+def test_stop_strings_cut_only_visible(qwen_srv):
+    content, reasoning, finish = stream_parts(
+        qwen_srv, {"messages": [{"role": "user", "content": "x"}],
+                   "stream": True, "stop": [ANSWER[:2]]})
+    assert reasoning == REASON            # reasoning streams before the stop cut
+    assert ANSWER[:2] not in content and content.startswith("\n\n")
+    assert finish == "stop"
+
+
+def test_completion_without_splitter_unchanged(srv):
+    # FakeTok has no `pre`: no reasoning_content key anywhere (regression lock)
+    _, url = srv
+    status, body = post(url, {"messages": [{"role": "user", "content": "3"}],
+                              "max_tokens": 4})
+    assert "reasoning_content" not in body["choices"][0]["message"]
+    content, reasoning, _ = stream_parts(url, {"messages": [{"role": "user", "content": "3"}],
+                                               "stream": True, "max_tokens": 4})
+    assert reasoning == "" and content

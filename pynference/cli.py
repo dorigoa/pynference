@@ -11,6 +11,9 @@ Chat (`chat` subcommand): rank 0 reads the user's lines (stdin, or `--script`
 FILE with one turn per line) and broadcasts commands over the engine control
 channel (C4); the other ranks just `follow()`. Slash commands: /reset,
 /system TEXT, /exit. After every answer one line of statistics.
+`--show-reasoning` prints the model's reasoning before the answer (GPT-OSS
+analysis channel, Qwen think block); `--no-reasoning` renders the prompt
+without thinking. Families without a splitter (Gemma 4) are unaffected.
 
 The conversation ids are kept token-exact: after an answer that filled the
 context (closed by a stop id, or cut by `-n`) the next user turn is appended
@@ -32,12 +35,12 @@ import time
 import torch
 
 from . import generate
-from .chat import render as render_chat
+from .chat import ReasoningSplitter, render as render_chat
 from .engine import Engine
 from .gguf import GGUFFile
 from .models import load_model
 from .parallel import TP
-from .tokenizer import Tokenizer
+from .tokenizer import StreamDecoder, Tokenizer, load_tokenizer
 
 
 def _chat_argv(argv: list[str]) -> argparse.Namespace:
@@ -54,6 +57,10 @@ def _chat_argv(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--seed", type=int, default=1234)
     ap.add_argument("--decode", choices=["graph", "fused", "torch"], default="graph",
                     help="decode path (as in pynference.generate)")
+    ap.add_argument("--show-reasoning", action="store_true",
+                    help="show the model's reasoning (GPT-OSS analysis channel, Qwen think block)")
+    ap.add_argument("--no-reasoning", action="store_true",
+                    help="render without thinking (Qwen enable_thinking=False; Gemma default template)")
     return ap.parse_args(argv)
 
 
@@ -113,7 +120,7 @@ def _chat(argv: list[str]) -> int:
     tp = TP()
     log = (lambda *a, **k: print(*a, **k, file=sys.stderr, flush=True)) if tp.is_main else (lambda *a, **k: None)
     g = GGUFFile(args.model)
-    tok = Tokenizer(g)
+    tok = load_tokenizer(g)
     log(f"[pynference] {g.kv.get('general.name')} ({g.arch}), {tp.world} GPU(s)")
     model = load_model(g, tp, max_ctx=args.ctx)
     model.fast_decode = args.decode != "torch"
@@ -136,9 +143,15 @@ def _chat(argv: list[str]) -> int:
     top_p = args.top_p if args.top_p is not None else float(g.kv.get("general.sampling.top_p", 1.0))
     sampling = {"temp": temp, "top_k": top_k, "top_p": top_p, "min_p": 0.0, "seed": args.seed}
     stop_ids = sorted(tok.eog_ids)
-    # enable_thinking=True: the only mode where turn k+1's prompt extends turn k's
-    # (no thought-channel suffix), which is what prefix reuse needs. See report S6/S7.
-    tkwargs = {"enable_thinking": True}
+    # Thinking on by default: for Gemma it is also the only mode where turn
+    # k+1's prompt extends turn k's (no thought-channel suffix), which is what
+    # prefix reuse needs (report S6/S7); --no-reasoning renders without it
+    # (Qwen templates: enable_thinking=False; Gemma: its default block).
+    thinking = not args.no_reasoning
+    if isinstance(tok, Tokenizer):
+        tkwargs = {"enable_thinking": True} if thinking else {}
+    else:
+        tkwargs = {"enable_thinking": thinking}
 
     def system_msgs():
         return [{"role": "system", "content": args.system}] if args.system else []
@@ -148,10 +161,33 @@ def _chat(argv: list[str]) -> int:
     text_prev: str | None = None          # last rendered prompt
     answer_prev: str | None = None        # its answer text
     stream_out = [False]
+    # reasoning families: split the stream so reasoning is shown only with
+    # --show-reasoning (and never mixed into the answer); tag text needs
+    # special tokens in, hence the own special=True decoder. The state
+    # machine restarts every answer: `sp[0]` is set before each run.
+    probe = ReasoningSplitter.from_tokenizer(tok)
+    raw_dec = StreamDecoder(tok, special=True) if probe is not None else None
+    sp: list[ReasoningSplitter | None] = [None]
+    in_thinking = [False]
 
-    def on_token(_tid: int, text: str) -> None:
-        print(text, end="", flush=True)
-        stream_out[0] = True
+    def on_token(tid: int, text: str) -> None:
+        if sp[0] is None:
+            print(text, end="", flush=True)
+            stream_out[0] = True
+            return
+        r, c = sp[0].push(raw_dec.push(tid))
+        if args.show_reasoning and r:
+            if not in_thinking[0]:
+                print("[reasoning]", flush=True)
+                in_thinking[0] = True
+            print(r, end="", flush=True)
+            stream_out[0] = True
+        if c:
+            if in_thinking[0]:
+                print(flush=True)
+                in_thinking[0] = False
+            print(c, end="", flush=True)
+            stream_out[0] = True
 
     def reset():
         nonlocal messages, ids, text_prev, answer_prev
@@ -193,9 +229,22 @@ def _chat(argv: list[str]) -> int:
         new_prompt = len(ids) - len(prev) if ids[:len(prev)] == prev and ids != prev else len(ids)
         prompt_len = len(ids)
         t0 = time.perf_counter()
+        sp[0] = ReasoningSplitter(probe.family) if probe is not None else None
+        in_thinking[0] = False
         generated = engine.run({"op": "generate", "ids": ids, "max_tokens": args.n_predict,
                                 "sampling": sampling, "stop_ids": stop_ids}, on_token=on_token)
         dt = time.perf_counter() - t0
+        if sp[0] is not None:                     # flush a stream cut by a tag tail
+            r, c = sp[0].close()
+            if args.show_reasoning and r:
+                print(r, end="", flush=True)
+                stream_out[0] = True
+            if c:
+                if in_thinking[0]:
+                    print(flush=True)
+                    in_thinking[0] = False
+                print(c, end="", flush=True)
+                stream_out[0] = True
         if stream_out[0]:
             print(flush=True)
             stream_out[0] = False
@@ -218,8 +267,9 @@ def main(argv=None) -> int:
     if argv and argv[0] == "chat":
         return _chat(argv[1:])
     print("usage: python -m pynference.cli {chat,generate} ...", file=sys.stderr)
-    print("  chat     -m MODEL [--system T] [--script FILE] [--ctx N] [-n M] "
-          "[--temp T] [--top-k K] [--top-p P] [--seed S] [--decode D]", file=sys.stderr)
+    print("  chat     -m MODEL [--system T] [--script FILE] [--ctx N] [-n M] [--temp T] "
+          "[--top-k K] [--top-p P] [--seed S] [--decode D] [--show-reasoning] [--no-reasoning]",
+          file=sys.stderr)
     print("  generate same options as python -m pynference.generate", file=sys.stderr)
     return 2
 
