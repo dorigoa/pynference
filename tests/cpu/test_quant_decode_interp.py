@@ -25,6 +25,9 @@ TYPES = ["Q4_0", "Q4_1", "Q5_0", "Q5_1", "IQ4_NL", "Q8_0"]
 # K-quants (S10): k must be a whole number of 256-element super-blocks, and 512
 # covers every element index of the super-block layout twice
 KTYPES = ["Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K"]
+# S11: qtype -> k that covers every element index of its block exactly twice
+# (MXFP4 32, Q2_0 64, IQ4_XS is a 256-element super-block)
+S11_K = {"MXFP4": 64, "Q2_0": 64, "IQ4_XS": 512}
 
 
 def test_dequant_native_interpreted():
@@ -52,6 +55,29 @@ def test_dequant_kquant_interpreted():
         kernels.dequant_native(qtype, torch.from_numpy(np.ascontiguousarray(raw)), out)
         bad = ~np.isclose(out.numpy(), ref, rtol=1e-4, atol=0)
         assert not bad.any(), f"{qtype}: {bad.sum()}/{bad.size} wrong elements"
+
+
+def test_dequant_s11_interpreted():
+    n = 2
+    for qtype, k in S11_K.items():
+        raw = make_test_blocks(qtype, n, k, seed=7)
+        ref = ref_dequant(raw, qtype)
+        out = torch.empty(n, k, dtype=torch.float32)
+        kernels.dequant_native(qtype, torch.from_numpy(np.ascontiguousarray(raw)), out)
+        bad = ~np.isclose(out.numpy(), ref, rtol=1e-4, atol=0)
+        assert not bad.any(), f"{qtype}: {bad.sum()}/{bad.size} wrong elements"
+
+
+def test_mxfp4_odd_rows_interpreted():
+    # 17 blocks of 17 bytes -> row_bytes 289, odd: the guarded _views path
+    # (W16 = raw, never dereferenced by the MXFP4 branch) must decode right
+    n, k = 2, 544
+    raw = make_test_blocks("MXFP4", n, k, seed=9)
+    ref = ref_dequant(raw, "MXFP4")
+    out = torch.empty(n, k, dtype=torch.float32)
+    kernels.dequant_native("MXFP4", torch.from_numpy(np.ascontiguousarray(raw)), out)
+    bad = ~np.isclose(out.numpy(), ref, rtol=1e-4, atol=0)
+    assert not bad.any(), f"MXFP4 odd rows: {bad.sum()}/{bad.size} wrong elements"
 
 
 def _views(t):
@@ -83,6 +109,44 @@ def test_gemv_indexed_interpreted_tail():
     # of two experts, one python-loop row per expert to compare against
     for qtype in TYPES + KTYPES:
         k = 64 if qtype in TYPES else 256
+        n, e = 3, 2
+        raws = [make_test_blocks(qtype, n, k, seed=11 + s) for s in range(e)]
+        refs = [ref_dequant(r, qtype) for r in raws]
+        rb = raws[0].shape[1]
+        xs = np.stack([np.linspace(-1.0, 1.0, k, dtype=np.float32),
+                       np.linspace(1.0, -1.0, k, dtype=np.float32)])
+        stack = torch.from_numpy(np.ascontiguousarray(np.stack(raws))).reshape(e * n, rb)
+        w8, wi, w16 = _views(stack)
+        out = torch.empty(e, n, dtype=torch.float32)
+        kernels._gemv_indexed_kernel.fn[(e, 1)](
+            w8, wi, w16, torch.from_numpy(xs), torch.tensor([1, 0], dtype=torch.int32),
+            out, n, k, rb, rb // 2, n * rb,
+            BLOCK_N=4, BLOCK_K=512, num_warps=4, **kernels._jit_args(qtype))
+        want = np.stack([refs[1] @ xs[0], refs[0] @ xs[1]])
+        bad = ~np.isclose(out.numpy(), want, rtol=1e-4, atol=1e-6)
+        assert not bad.any(), f"{qtype} gemv idx tail: {bad.sum()}/{want.size} wrong"
+
+
+def test_gemv_s11_interpreted_tail():
+    # same tail/row masking for the S11 types (S11 lesson check before the job)
+    for qtype, k in S11_K.items():
+        n = 3
+        raw_np = make_test_blocks(qtype, n, k, seed=11)
+        ref = ref_dequant(raw_np, qtype)
+        x_np = np.linspace(-1.0, 1.0, k, dtype=np.float32)
+        rb = raw_np.shape[1]
+        w8, wi, w16 = _views(torch.from_numpy(np.ascontiguousarray(raw_np)))
+        y = torch.empty(1, n, dtype=torch.float32)
+        kernels._gemv_kernel.fn[(1,)](w8, wi, w16, torch.from_numpy(x_np), y,
+                                      n, k, rb, rb // 2,
+                                      BLOCK_N=4, BLOCK_K=512, num_warps=4,
+                                      **kernels._jit_args(qtype))
+        bad = ~np.isclose(y[0].numpy(), ref @ x_np, rtol=1e-4, atol=1e-6)
+        assert not bad.any(), f"{qtype} gemv tail: {bad.sum()}/{n} wrong rows"
+
+
+def test_gemv_indexed_s11_interpreted_tail():
+    for qtype, k in S11_K.items():
         n, e = 3, 2
         raws = [make_test_blocks(qtype, n, k, seed=11 + s) for s in range(e)]
         refs = [ref_dequant(r, qtype) for r in raws]
