@@ -1,0 +1,24 @@
+== start 13:58:56
+llama-server up on 8091
+== server-start exit 0
+-- swa/pattern lines from server log:
+(no swa lines)
+-- memory lines:
+tokens.json: 14 cases
+template.json: 2 prompts
+ref_probs chat-it: '<|channel|>analysis<|message|>The user asks in Italian: "Qual è la capitale d\'It'
+ref_probs chat-en: '<|channel|>analysis<|message|>We need to write a haiku about the sea. Haiku is 5'
+ref_probs code: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, '
+ref_probs raw: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years,'
+ref_probs.json: done
+== golden exit 0
+== server-stop exit 0
+0.55.876.853 I Final estimate: PPL = 1.5995 +/- 0.03987
+== ppl exit 0
+total 112
+-rw-rw-r-- 1 alvise alvise  5509 Nov 16 14:00 llama-server-8091.log
+-rw-rw-r-- 1 alvise alvise  1433 Nov 16 14:01 ref_ppl.log
+-rw-rw-r-- 1 alvise alvise 91880 Nov 16 14:00 ref_probs.json
+-rw-rw-r-- 1 alvise alvise  1105 Nov 16 13:59 template.json
+-rw-rw-r-- 1 alvise alvise  2169 Nov 16 13:59 tokens.json
+== end 14:01:03
