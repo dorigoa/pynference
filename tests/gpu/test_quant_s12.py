@@ -40,7 +40,7 @@ REL_TOL = 1e-4
 # contract (the card only asks to measure), so these just catch real
 # regressions: low 40 GB/s floors on the first pass, fixed after the job
 # measures (S10/S11 pattern).
-MIN_GBPS = {"IQ3_XXS": 40.0, "IQ2_S": 40.0}
+MIN_GBPS = {"IQ3_XXS": 60.0, "IQ2_S": 50.0}
 
 
 def _native(qtype, raw, n, k):

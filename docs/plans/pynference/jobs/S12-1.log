@@ -1,0 +1,38 @@
+== start 12:35:22
+RES IQ3_XXS deq=0.00e+00 deq_rows=0.00e+00
+.RES IQ2_S deq=0.00e+00 deq_rows=0.00e+00
+.RES IQ3_XXS gemv=4.25e-07
+.RES IQ2_S gemv=2.93e-07
+.RES IQ3_XXS gemv_idx=1.93e-07
+.RES IQ2_S gemv_idx=1.76e-07
+.RES IQ3_XXS real blk.0.ffn_up_exps.weight 256x2560 deq=0.00e+00 gemv=4.23e-07
+.RES IQ2_S real blk.8.ffn_up_exps.weight 256x2560 deq=0.00e+00 gemv=3.42e-07
+.RES IQ3_XXS gbps=66.3 (16.9 MB)
+.RES IQ2_S gbps=59.3 (14.1 MB)
+.
+10 passed in 64.03s (0:01:04)
+== pytest s12 exit 0 (12:36:26)
+........................................................................ [ 75%]
+.......................                                                  [100%]
+95 passed, 1 skipped in 391.04s (0:06:31)
+== pytest gpu exit 0 (12:42:58)
+== regress exit 0 (12:44:45)
+== regress gemma4: ours --ref (graph) 12:42:58
+  loaded 50/60 layers (23s)
+  loaded 60/60 layers (30s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (12:43:52)
+== regress gemma4: ppl 12:43:52
+== ppl exit 0 (12:44:45)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 11.4s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 12:44:45
