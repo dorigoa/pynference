@@ -1,0 +1,76 @@
+[
+ {
+  "name": "chat-it",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Qual è la capitale d'Italia? Rispondi in una frase."
+   }
+  ],
+  "kwargs": {},
+  "prompt": "\u003c|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.\u003c|im_end|>\n\u003c|im_start|>user\nQual è la capitale d'Italia? Rispondi in una frase.\u003c|im_end|>\n\u003c|im_start|>assistant\n\u003cthink>\n"
+ },
+ {
+  "name": "chat-en",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Write a haiku about the sea."
+   }
+  ],
+  "kwargs": {},
+  "prompt": "\u003c|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.\u003c|im_end|>\n\u003c|im_start|>user\nWrite a haiku about the sea.\u003c|im_end|>\n\u003c|im_start|>assistant\n\u003cthink>\n"
+ },
+ {
+  "name": "chat-it-thinking-1",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Qual è la capitale d'Italia? Rispondi in una frase."
+   }
+  ],
+  "kwargs": {
+   "enable_thinking": true
+  },
+  "prompt": "\u003c|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.\u003c|im_end|>\n\u003c|im_start|>user\nQual è la capitale d'Italia? Rispondi in una frase.\u003c|im_end|>\n\u003c|im_start|>assistant\n\u003cthink>\n"
+ },
+ {
+  "name": "chat-it-thinking-0",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Qual è la capitale d'Italia? Rispondi in una frase."
+   }
+  ],
+  "kwargs": {
+   "enable_thinking": false
+  },
+  "prompt": "\u003c|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.\u003c|im_end|>\n\u003c|im_start|>user\nQual è la capitale d'Italia? Rispondi in una frase.\u003c|im_end|>\n\u003c|im_start|>assistant\n\u003cthink>\n"
+ },
+ {
+  "name": "chat-en-thinking-1",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Write a haiku about the sea."
+   }
+  ],
+  "kwargs": {
+   "enable_thinking": true
+  },
+  "prompt": "\u003c|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.\u003c|im_end|>\n\u003c|im_start|>user\nWrite a haiku about the sea.\u003c|im_end|>\n\u003c|im_start|>assistant\n\u003cthink>\n"
+ },
+ {
+  "name": "chat-en-thinking-0",
+  "messages": [
+   {
+    "role": "user",
+    "content": "Write a haiku about the sea."
+   }
+  ],
+  "kwargs": {
+   "enable_thinking": false
+  },
+  "prompt": "\u003c|im_start|>system\nReasoning effort is set to xhigh. Please think carefully through the task, validate key assumptions, consider plausible alternatives, and prioritize correctness, consistency, and clarity in the final answer.\u003c|im_end|>\n\u003c|im_start|>user\nWrite a haiku about the sea.\u003c|im_end|>\n\u003c|im_start|>assistant\n\u003cthink>\n"
+ }
+]
