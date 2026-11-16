@@ -16,6 +16,8 @@ import torch.nn.functional as F
 import triton
 import triton.language as tl
 
+from .weight import _Scratch
+
 QK8_0 = 32
 
 
@@ -61,18 +63,6 @@ def _q8_dequant(W, S, O, N, K, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr):
     w = tl.load(W + rn64[:, None] * K + rk[None, :], mask=m2, other=0).to(tl.float32)
     s = tl.load(S + rn64[:, None] * (K // 32) + (rk // 32)[None, :], mask=m2, other=0.0).to(tl.float32)
     tl.store(O + rn64[:, None] * K + rk[None, :], (w * s).to(tl.bfloat16), mask=m2)
-
-
-class _Scratch:
-    """One growable bf16 buffer per device for dequantized prefill weights."""
-    bufs: dict = {}
-
-    @classmethod
-    def get(cls, numel: int, device) -> torch.Tensor:
-        b = cls.bufs.get(device)
-        if b is None or b.numel() < numel:
-            b = cls.bufs[device] = torch.empty(numel, dtype=torch.bfloat16, device=device)
-        return b[:numel]
 
 
 class QLinear:

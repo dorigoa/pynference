@@ -3,8 +3,10 @@
 Weights stay in the native GGUF layout (contract C2), so expert stacks are
 copied from RAM byte for byte. Q8_0 is the one dense type with a repacked
 layout (`QLinear` in q8_0.py). The Triton kernels used here live in
-`kernels.py`; the import is lazy so that CPU-only paths (gguf reading, tests)
-never pull in Triton.
+`kernels.py`, and `q8_0.py` pulls in Triton too; both imports are lazy so
+that CPU-only paths (gguf reading, tests, moe) never load Triton at import
+time (tests/cpu/test_quant_decode_interp.py needs to set TRITON_INTERPRET
+before Triton is first imported).
 """
 from __future__ import annotations
 
@@ -12,8 +14,19 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .q8_0 import QLinear, _Scratch, q8_0_to_device
 from .types import TYPES, check_split, row_bytes
+
+
+class _Scratch:
+    """One growable bf16 buffer per device for dequantized prefill weights."""
+    bufs: dict = {}
+
+    @classmethod
+    def get(cls, numel: int, device) -> torch.Tensor:
+        b = cls.bufs.get(device)
+        if b is None or b.numel() < numel:
+            b = cls.bufs[device] = torch.empty(numel, dtype=torch.bfloat16, device=device)
+        return b[:numel]
 
 
 class QWeight:
@@ -138,6 +151,7 @@ def make_qweight(raw: np.ndarray, qtype: str, n: int, k: int, device) -> QWeight
         raise ValueError(f"{qtype}: expected {n * rb} bytes for {n}x{k}, got {raw.size}")
     t = TYPES[qtype]
     if qtype == "Q8_0":
+        from .q8_0 import QLinear, q8_0_to_device  # lazy: pulls in Triton
         return QLinear(*q8_0_to_device(raw, n, k, device))
     dev_bytes = torch.from_numpy(np.ascontiguousarray(raw)).to(device)
     if qtype == "F32":

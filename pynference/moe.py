@@ -13,6 +13,7 @@ duplicated — weights are read-only, so eviction needs no write-back.
 """
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import Callable
 
@@ -20,7 +21,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .quant import row_bytes
+from .quant import gemv_indexed, row_bytes
 
 PINNED_LIMIT_BYTES = 80 * (1 << 30)  # C5: at most 80 GB of pinned RAM total
 
@@ -353,3 +354,133 @@ class ExpertStore:
 
     def pinned_bytes(self) -> int:
         return self._pinned
+
+
+# ------------------------------------------------------------- MoE layer (C5)
+
+class MoE:
+    """Generic MoE layer over an ExpertStore (C5): router, top-k, resolve,
+    indexed GEMVs, activation, weighted sum, all_reduce.
+
+    The layer consumes the expert groups named "gate" [ffn, k], "up"
+    [ffn, k] and "down" [k, ffn] of one store layer. `router_w` [E, k]
+    (and the optional `router_bias` [E]) are float32 and replicated: every
+    rank computes the same top-k, filters to its own experts (expert
+    parallel, C5) and the cross-rank sum is one `tp.all_reduce` at the end.
+    `shared`, when given, is a triple (gate, up, down) of `QWeight`s for a
+    dense FFN every rank computes on every token, added before the
+    all_reduce.
+
+    Decode (M = 1): the top-k lands on the host with one sync per layer
+    (C5), so the layer can batch local experts for `resolve`: residents in
+    one batch with up to `X` swap misses, further misses in blocks of `X`
+    (the resolve constraint, see SlotMap). Prefill: one logits transfer,
+    then tokens are grouped per expert and each expert's slot is dequantized
+    once into a reusable bf16 scratch (the M>1 path of C2) before `F.linear`
+    on its token group.
+    """
+
+    def __init__(self, store: ExpertStore, layer: int, *, top_k: int,
+                 router_w: torch.Tensor, router_bias: torch.Tensor | None = None,
+                 activation: str = "swiglu", alpha: float = 1.702,
+                 limit: float = 7.0010, shared=None):
+        self.store = store
+        self.tp = store.tp
+        self.layer = layer
+        groups = store.layers[layer]
+        missing = {"gate", "up", "down"} - set(groups)
+        if missing:
+            raise ValueError(f"MoE layer {layer}: missing expert groups {sorted(missing)}")
+        self.gate, self.up, self.down = groups["gate"], groups["up"], groups["down"]
+        self.k, self.ffn = self.gate.k, self.gate.n
+        if (self.up.n, self.up.k) != (self.ffn, self.k) or \
+           (self.down.n, self.down.k) != (self.k, self.ffn):
+            raise ValueError("MoE: gate/up must be [ffn, k] and down [k, ffn]")
+        self.n_experts = self.gate.n_experts
+        self.top_k = top_k
+        if router_w.shape != (self.n_experts, self.k) or router_w.dtype != torch.float32:
+            raise ValueError(f"router_w must be float32 [{self.n_experts}, {self.k}]")
+        if router_bias is not None and router_bias.shape != (self.n_experts,):
+            raise ValueError(f"router_bias must be [{self.n_experts}]")
+        self.router_w = router_w
+        self.router_bias = router_bias
+        act = ACTIVATIONS[activation]
+        self.act = functools.partial(act, alpha=alpha, limit=limit) \
+            if activation == "swiglu_oai" else act
+        self.shared = tuple(shared) if shared is not None else None
+        self.local = set(store.local_ids[layer])
+        self._scratch: dict[tuple[str, int, int], torch.Tensor] = {}
+
+    def _logits(self, x: torch.Tensor) -> torch.Tensor:
+        """x [T, k] f32 -> [T, E] router logits."""
+        l = x @ self.router_w.T
+        if self.router_bias is not None:
+            l = l + self.router_bias
+        return l
+
+    def _shared_out(self, x: torch.Tensor) -> torch.Tensor:
+        gate, up, down = self.shared
+        return down(self.act(gate(x), up(x)))
+
+    def decode(self, x: torch.Tensor) -> torch.Tensor:
+        """One token: x [1, k] (or [k]) f32 -> [k] f32 summed over ranks."""
+        x = x.reshape(1, self.k)
+        dev = x.device
+        ids, w = route_weights(self._logits(x)[0], self.top_k)  # one host sync (C5)
+        y = torch.zeros(self.k, dtype=torch.float32, device=dev)
+        m = self.store.maps[self.layer]
+        X = m.S - m.R  # swap slots: fresh misses allowed per resolve
+        sel = [(e, wt) for e, wt in zip(ids, w) if e in self.local]
+        res = [p for p in sel if p[0] in m.resident]
+        mis = [p for p in sel if p[0] not in m.resident]
+        step = max(X, 1)
+        batches = [res + mis[i:i + step] for i in range(0, len(mis), step)] or [res]
+        for b in batches:
+            if not b:
+                continue
+            slots = self.store.resolve(self.layer, [e for e, _ in b])
+            L = len(b)
+            xrep = x.repeat(L, 1)  # same token for each expert, [L, k]
+            g = torch.empty(L, self.ffn, dtype=torch.float32, device=dev)
+            u = torch.empty(L, self.ffn, dtype=torch.float32, device=dev)
+            gemv_indexed(self.gate.qtype, self.store.bufs[self.layer]["gate"], xrep, slots, g)
+            gemv_indexed(self.up.qtype, self.store.bufs[self.layer]["up"], xrep, slots, u)
+            a = self.act(g, u).contiguous()
+            d = torch.empty(L, self.k, dtype=torch.float32, device=dev)
+            gemv_indexed(self.down.qtype, self.store.bufs[self.layer]["down"], a, slots, d)
+            wts = torch.tensor([wt for _, wt in b], dtype=torch.float32, device=dev)
+            y += (d * wts[:, None]).sum(0)
+        if self.shared is not None:
+            y += self._shared_out(x)[0]
+        return self.tp.all_reduce(y)
+
+    def prefill(self, x: torch.Tensor) -> torch.Tensor:
+        """Token chunk: x [T, k] f32 -> [T, k] f32 summed over ranks."""
+        x = x.reshape(-1, self.k)
+        dev = x.device
+        p = torch.softmax(self._logits(x), 1)
+        w, idx = torch.topk(p, self.top_k, dim=1)
+        w = w / w.sum(1, keepdim=True)
+        ids_h, w_h = idx.cpu().tolist(), w.float().cpu().tolist()  # one sync
+        y = torch.zeros_like(x)
+        for e, (rows, wts) in group_by_expert(ids_h, w_h, self.local).items():
+            slot = self.store.resolve(self.layer, [e]).item()
+            r = torch.from_numpy(rows).to(dev)
+            xt = x[r]
+            a = self.act(self._gemm(self.gate, slot, xt),
+                         self._gemm(self.up, slot, xt))
+            d = self._gemm(self.down, slot, a)
+            y.index_add_(0, r, d * torch.from_numpy(wts).to(dev)[:, None])
+        if self.shared is not None:
+            y += self._shared_out(x)
+        return self.tp.all_reduce(y)
+
+    def _gemm(self, group: ExpertGroup, slot: int, x: torch.Tensor) -> torch.Tensor:
+        """Prefill M>1 path (C2): dequant one slot into bf16 scratch, F.linear."""
+        from .quant import kernels
+        w = self._scratch.get((group.name, group.n, group.k))
+        if w is None:
+            w = torch.empty(group.n, group.k, dtype=torch.bfloat16, device=x.device)
+            self._scratch[(group.name, group.n, group.k)] = w
+        kernels.dequant_native(group.qtype, self.store.bufs[self.layer][group.name][slot], w)
+        return F.linear(x.bfloat16(), w).float()

@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 import torch
 
-from pynference.moe import (ExpertGroup, HostPool, SlotMap, ACTIVATIONS,
+from pynference.moe import (ExpertGroup, HostPool, MoE, SlotMap, ACTIVATIONS,
                             expert_owner, group_by_expert, local_experts,
                             plan_residency, route_weights, swiglu, swiglu_oai)
 from pynference.quant import row_bytes
@@ -175,3 +175,78 @@ def test_group_by_expert_local_filtering():
     rows3, w3 = got[3]
     assert rows3.tolist() == [1, 2] and w3.tolist() == pytest.approx([0.7, 0.5])
     assert rows1.dtype == np.int64 and w1.dtype == np.float32
+
+
+# ------------------------------------------------------------- MoE construction
+
+def _fake_store():
+    from types import SimpleNamespace
+    gate = _group(name="gate", n=32)                # [32, 128] (Q8_0: k % 32)
+    up = _group(name="up", n=32)                    # [32, 128]
+    down = _group(name="down", n=128, k=32)         # [128, 32]
+    layers = {0: {"gate": gate, "up": up, "down": down}}
+    return SimpleNamespace(tp=SimpleNamespace(rank=0, world=1), layers=layers,
+                           local_ids={0: [0, 2, 4, 6]}, maps={}, bufs={})
+
+
+def _moe(store=None, **kw):
+    args = dict(top_k=2, router_w=torch.randn(8, 128), router_bias=torch.randn(8))
+    args.update(kw)
+    return MoE(store or _fake_store(), 0, **args)
+
+
+def test_moe_construction_ok():
+    m = _moe()
+    assert (m.k, m.ffn, m.n_experts, m.top_k) == (128, 32, 8, 2)
+    assert m.local == {0, 2, 4, 6}
+    g, u = torch.tensor([1.0, -2.0]), torch.tensor([0.5, 3.0])
+    assert torch.allclose(_moe(activation="swiglu").act(g, u), swiglu(g, u))
+    assert torch.allclose(_moe(activation="swiglu_oai").act(g, u), swiglu_oai(g, u))
+
+
+def test_moe_construction_rejects_bad_inputs():
+    store = _fake_store()
+    del store.layers[0]["up"]
+    with pytest.raises(ValueError, match="missing expert groups"):
+        _moe(store)
+    store = _fake_store()
+    store.layers[0]["down"] = _group(name="down", n=32, k=128)  # gate-shaped
+    with pytest.raises(ValueError, match=r"gate/up must be"):
+        _moe(store)
+    with pytest.raises(ValueError, match="router_w must be"):
+        _moe(router_w=torch.randn(8, 128, dtype=torch.float64))
+    with pytest.raises(ValueError, match="router_w must be"):
+        _moe(router_w=torch.randn(6, 128))
+    with pytest.raises(ValueError, match="router_bias must be"):
+        _moe(router_bias=torch.randn(4))
+
+
+# ------------------------------------------------------------- bench seed guards
+
+def _load_bench():
+    import importlib.util
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("moe_check",
+                                                  root / "bench" / "moe_check.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_bench_seeds_route_unambiguously_and_raw_is_deterministic():
+    mc = _load_bench()
+    assert [c[0] for c in mc.CFGS] == ["Q8_0", "MXFP4", "IQ4_XS"]
+    for qi, (qtype, k, ffn, _act) in enumerate(mc.CFGS):
+        rng = np.random.default_rng(7777 + qi)  # same draw order as the bench
+        router = rng.standard_normal((mc.N_EXPERTS, k)).astype(np.float32)
+        bias = (0.3 * rng.standard_normal(mc.N_EXPERTS)).astype(np.float32)
+        toks = (0.3 * rng.standard_normal((32, k))).astype(np.float32)
+        idx, w = mc.route(toks, router, bias)  # asserts a safe 4th-vs-5th margin
+        assert idx.shape == (32, mc.TOP_K)
+        assert w.sum(1).max() < 1.0 + 1e-5
+        # all experts get routed to, so every slot path runs in the job
+        assert len(set(idx.reshape(-1).tolist())) == mc.N_EXPERTS
+        raw = mc.raw_bytes(qi, qtype, k, ffn, 5, "down")
+        assert raw.shape == (k, row_bytes(qtype, ffn))
+        assert np.array_equal(raw, mc.raw_bytes(qi, qtype, k, ffn, 5, "down"))
