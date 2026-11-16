@@ -28,6 +28,10 @@ KTYPES = ["Q2_K", "Q3_K", "Q4_K", "Q5_K", "Q6_K"]
 # S11: qtype -> k that covers every element index of its block exactly twice
 # (MXFP4 32, Q2_0 64, IQ4_XS is a 256-element super-block)
 S11_K = {"MXFP4": 64, "Q2_0": 64, "IQ4_XS": 512}
+# S12: grid types, 256-element super-blocks; 512 covers every index twice
+S12_K = {"IQ3_XXS": 512}
+# S11 + S12 super-block types share the k-tail gemv checks below
+SUPER_K = {**S11_K, **S12_K}
 
 
 def test_dequant_native_interpreted():
@@ -59,7 +63,7 @@ def test_dequant_kquant_interpreted():
 
 def test_dequant_s11_interpreted():
     n = 2
-    for qtype, k in S11_K.items():
+    for qtype, k in SUPER_K.items():
         raw = make_test_blocks(qtype, n, k, seed=7)
         ref = ref_dequant(raw, qtype)
         out = torch.empty(n, k, dtype=torch.float32)
@@ -84,6 +88,11 @@ def _views(t):
     return t, t.view(torch.int8), t.view(torch.uint16)
 
 
+def _tables(qtype, t):
+    # GRID/KSGN device tables (raw itself as dummy for non-grid types)
+    return kernels._iq_ptrs(qtype, t)
+
+
 def test_gemv_interpreted_tail():
     # BLOCK_K=512 with k<512 forces the clamped k-tail, n=3 with BLOCK_N=4
     # forces masked rows: both must agree with the dequant reference
@@ -95,8 +104,9 @@ def test_gemv_interpreted_tail():
         x_np = np.linspace(-1.0, 1.0, k, dtype=np.float32)
         rb = raw_np.shape[1]
         w8, wi, w16 = _views(torch.from_numpy(np.ascontiguousarray(raw_np)))
+        g, sg = _tables(qtype, w8)
         y = torch.empty(1, n, dtype=torch.float32)
-        kernels._gemv_kernel.fn[(1,)](w8, wi, w16, torch.from_numpy(x_np), y,
+        kernels._gemv_kernel.fn[(1,)](w8, wi, w16, g, sg, torch.from_numpy(x_np), y,
                                       n, k, rb, rb // 2,
                                       BLOCK_N=4, BLOCK_K=512, num_warps=4,
                                       **kernels._jit_args(qtype))
@@ -117,9 +127,10 @@ def test_gemv_indexed_interpreted_tail():
                        np.linspace(1.0, -1.0, k, dtype=np.float32)])
         stack = torch.from_numpy(np.ascontiguousarray(np.stack(raws))).reshape(e * n, rb)
         w8, wi, w16 = _views(stack)
+        g, sg = _tables(qtype, w8)
         out = torch.empty(e, n, dtype=torch.float32)
         kernels._gemv_indexed_kernel.fn[(e, 1)](
-            w8, wi, w16, torch.from_numpy(xs), torch.tensor([1, 0], dtype=torch.int32),
+            w8, wi, w16, g, sg, torch.from_numpy(xs), torch.tensor([1, 0], dtype=torch.int32),
             out, n, k, rb, rb // 2, n * rb,
             BLOCK_N=4, BLOCK_K=512, num_warps=4, **kernels._jit_args(qtype))
         want = np.stack([refs[1] @ xs[0], refs[0] @ xs[1]])
@@ -129,15 +140,16 @@ def test_gemv_indexed_interpreted_tail():
 
 def test_gemv_s11_interpreted_tail():
     # same tail/row masking for the S11 types (S11 lesson check before the job)
-    for qtype, k in S11_K.items():
+    for qtype, k in SUPER_K.items():
         n = 3
         raw_np = make_test_blocks(qtype, n, k, seed=11)
         ref = ref_dequant(raw_np, qtype)
         x_np = np.linspace(-1.0, 1.0, k, dtype=np.float32)
         rb = raw_np.shape[1]
         w8, wi, w16 = _views(torch.from_numpy(np.ascontiguousarray(raw_np)))
+        g, sg = _tables(qtype, w8)
         y = torch.empty(1, n, dtype=torch.float32)
-        kernels._gemv_kernel.fn[(1,)](w8, wi, w16, torch.from_numpy(x_np), y,
+        kernels._gemv_kernel.fn[(1,)](w8, wi, w16, g, sg, torch.from_numpy(x_np), y,
                                       n, k, rb, rb // 2,
                                       BLOCK_N=4, BLOCK_K=512, num_warps=4,
                                       **kernels._jit_args(qtype))
@@ -146,7 +158,7 @@ def test_gemv_s11_interpreted_tail():
 
 
 def test_gemv_indexed_s11_interpreted_tail():
-    for qtype, k in S11_K.items():
+    for qtype, k in SUPER_K.items():
         n, e = 3, 2
         raws = [make_test_blocks(qtype, n, k, seed=11 + s) for s in range(e)]
         refs = [ref_dequant(r, qtype) for r in raws]
@@ -155,9 +167,10 @@ def test_gemv_indexed_s11_interpreted_tail():
                        np.linspace(1.0, -1.0, k, dtype=np.float32)])
         stack = torch.from_numpy(np.ascontiguousarray(np.stack(raws))).reshape(e * n, rb)
         w8, wi, w16 = _views(stack)
+        g, sg = _tables(qtype, w8)
         out = torch.empty(e, n, dtype=torch.float32)
         kernels._gemv_indexed_kernel.fn[(e, 1)](
-            w8, wi, w16, torch.from_numpy(xs), torch.tensor([1, 0], dtype=torch.int32),
+            w8, wi, w16, g, sg, torch.from_numpy(xs), torch.tensor([1, 0], dtype=torch.int32),
             out, n, k, rb, rb // 2, n * rb,
             BLOCK_N=4, BLOCK_K=512, num_warps=4, **kernels._jit_args(qtype))
         want = np.stack([refs[1] @ xs[0], refs[0] @ xs[1]])

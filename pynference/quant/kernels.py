@@ -7,11 +7,36 @@ formulas mirror `dequantize_row_*` in ggml-quants.c.
 """
 from __future__ import annotations
 
+import numpy as np
 import torch
 import triton
 import triton.language as tl
 
+from .iq_grids import IQ3XXS_GRID, IQ2S_GRID, KSIGNS_IQ2XS
 from .types import TYPES, row_bytes
+
+# Device tables for the grid types (S12): a grid entry packs its values in its
+# bytes little-endian (4 for iq3xxs_grid, 8 for iq2s_grid), so the byte view of
+# the uint32/uint64 arrays is exactly the (entry, value) byte map the kernels
+# index. ksigns_iq2xs is the sign-bit helper of ggml-quants.c.
+_TABLES: dict = {}
+
+
+def _iq_tables(qtype: str, device):
+    """(GRID, KSGN) uint8 device tensors for grid types; (None, None) otherwise."""
+    if qtype not in ("IQ3_XXS", "IQ2_S"):
+        return None, None
+    key = (qtype, str(device))
+    t = _TABLES.get(key)
+    if t is None:
+        if qtype == "IQ3_XXS":
+            grid = np.array(IQ3XXS_GRID, dtype=np.uint32).view(np.uint8)
+        else:
+            grid = np.array(IQ2S_GRID, dtype=np.uint64).view(np.uint8)
+        t = (torch.from_numpy(grid.copy()).to(device),
+             torch.from_numpy(np.array(KSIGNS_IQ2XS, dtype=np.uint8)).to(device))
+        _TABLES[key] = t
+    return t
 
 # Fields of one GGUF block, in bytes/words (a word = 2 bytes):
 # BB  block bytes, WPB = BB // 2 words per block, QS byte offset of the
@@ -56,6 +81,11 @@ _LAYOUT = {
     # (shifted) | 2 bits of scales_h at 2*sub-block, value via kvalues_iq4nl.
     "IQ4_XS": dict(BB=136, WPB=68, QS=8,  MS=None, QHB=None,
                    BS=256, DW=0,   DMW=None, SCL=4,  HMB=None),
+    # IQ3_XXS (S12): d fp16, 96 qs bytes (64 grid indices, then 32 scale+sign
+    # bytes: 8 groups of 4, aux32 = d-scale 4 bits + 7x7 sign picks); per
+    # element: grid byte of IQ3XXS_GRID[idx] and ksigns bit (dequantize_row_iq3_xxs)
+    "IQ3_XXS": dict(BB=98,  WPB=49,  QS=2,  MS=None, QHB=None,
+                    BS=256, DW=0,   DMW=None, SCL=66, HMB=None),
 }
 
 
@@ -93,7 +123,7 @@ def _fp4kv(nib):
 
 
 @triton.jit
-def _decode_k(RAW8, RAWI, W16, off8, b, e,
+def _decode_k(RAW8, RAWI, W16, GRID, KSGN, off8, b, e,
               KQ: tl.constexpr, BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
               QHB: tl.constexpr, DW: tl.constexpr, DMW: tl.constexpr,
               SCL: tl.constexpr, HMB: tl.constexpr):
@@ -105,6 +135,23 @@ def _decode_k(RAW8, RAWI, W16, off8, b, e,
     """
     off16 = off8 >> 1
     d = tl.load(W16 + off16 + b * WPB + DW).to(tl.float16, bitcast=True).to(tl.float32)
+    if KQ == "IQ3_XXS":  # x = db * grid_byte * sign, db = d*(1/2 + 4-bit scale)*1/2
+        # (dequantize_row_iq3_xxs): aux32 at SCL + 4*sub-block, elements of
+        # sub-block ib: l = (e>>3)&3 picks the qs byte and the 7 sign bits,
+        # jj = e&7 the grid byte (first 4 from qs[2l], last 4 from qs[2l+1])
+        ib = e >> 5
+        l = (e >> 3) & 3
+        jj = e & 7
+        so = off8 + b * BB + SCL + ib * 4
+        aux = (tl.load(RAW8 + so).to(tl.int32)
+               | (tl.load(RAW8 + so + 1).to(tl.int32) << 8)
+               | (tl.load(RAW8 + so + 2).to(tl.int32) << 16)
+               | (tl.load(RAW8 + so + 3).to(tl.int32) << 24))
+        db = d * (0.5 + ((aux >> 28) & 0xF)) * 0.5
+        qb = tl.load(RAW8 + off8 + b * BB + QS + ib * 8 + 2 * l + (jj >> 2)).to(tl.int32)
+        g = tl.load(GRID + qb * 4 + (jj & 3)).to(tl.float32)
+        sg = tl.load(KSGN + ((aux >> (7 * l)) & 127)).to(tl.int32)
+        return db * g * tl.where(((sg >> jj) & 1) == 1, -1.0, 1.0)
     if KQ == "IQ4_XS":  # x = d*(ls-32)*kvalues_iq4nl[q], ls 6-bit per 32 (dequantize_row_iq4_xs)
         ib = e >> 5
         sh = tl.load(W16 + off16 + b * WPB + 1).to(tl.int32)          # scales_h (bytes 2-3)
@@ -162,7 +209,7 @@ def _decode_k(RAW8, RAWI, W16, off8, b, e,
 
 
 @triton.jit
-def _decode(RAW8, RAWI, W16, off8, b, e, RB16,
+def _decode(RAW8, RAWI, W16, GRID, KSGN, off8, b, e, RB16,
             Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
             Q2_0: tl.constexpr, MXFP4: tl.constexpr,
             BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
@@ -171,7 +218,7 @@ def _decode(RAW8, RAWI, W16, off8, b, e, RB16,
             SCL: tl.constexpr, HMB: tl.constexpr):
     """Float32 values of elements e (0..BS-1) of block b, rows at byte offset off8."""
     if KQ != "":
-        return _decode_k(RAW8, RAWI, W16, off8, b, e, KQ, BB, WPB, QS, QHB, DW, DMW, SCL, HMB)
+        return _decode_k(RAW8, RAWI, W16, GRID, KSGN, off8, b, e, KQ, BB, WPB, QS, QHB, DW, DMW, SCL, HMB)
     if MXFP4:
         # d = ggml_e8m0_to_fp32_half(e): bit-for-bit the gguf-py trick, i.e.
         # 2**(e-128) for every e in 0..255 (e=0,1 are denormal mantissas)
@@ -224,7 +271,7 @@ def _jit_args(qtype: str) -> dict:
 
 
 @triton.jit
-def _dequant_kernel(RAW8, RAWI, W16, OUT, IDX, M, K, RB8, RB16,
+def _dequant_kernel(RAW8, RAWI, W16, GRID, KSGN, OUT, IDX, M, K, RB8, RB16,
                     Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
                     Q2_0: tl.constexpr, MXFP4: tl.constexpr,
                     BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
@@ -243,7 +290,7 @@ def _dequant_kernel(RAW8, RAWI, W16, OUT, IDX, M, K, RB8, RB16,
     off8 = (src * RB8)[:, None]
     b = (rk // BS)[None, :]
     e = (rk % BS)[None, :]
-    v = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, Q2_0, MXFP4,
+    v = _decode(RAW8, RAWI, W16, GRID, KSGN, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, Q2_0, MXFP4,
                 BB, WPB, QS, MS, QHB, KQ, DW, DMW, SCL, HMB)
     m2 = nm[:, None] & (rk < K)[None, :]
     tl.store(OUT + rn.to(tl.int64)[:, None] * K + rk[None, :], v, mask=m2)
@@ -266,7 +313,7 @@ _GEMV_KEY = ["N", "K", "Q8_0", "HAS_M", "HAS_QH", "IQ4", "Q2_0", "MXFP4", "BB", 
 
 @triton.autotune(configs=_GEMV_CONFIGS, key=_GEMV_KEY)
 @triton.jit
-def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
+def _gemv_kernel(RAW8, RAWI, W16, GRID, KSGN, X, Y, N, K, RB8, RB16,
                  Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
                  Q2_0: tl.constexpr, MXFP4: tl.constexpr,
                  BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
@@ -284,7 +331,7 @@ def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
         x = tl.load(X + rk, mask=mk, other=0.0)
         b = (rk // BS)[None, :]
         e = (rk % BS)[None, :]
-        w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, Q2_0, MXFP4,
+        w = _decode(RAW8, RAWI, W16, GRID, KSGN, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, Q2_0, MXFP4,
                     BB, WPB, QS, MS, QHB, KQ, DW, DMW, SCL, HMB)
         acc += tl.sum(tl.where(nm[:, None] & mk[None, :], w, 0.0) * x[None, :], axis=1)
     tl.store(Y + rn, acc, mask=nm)
@@ -292,7 +339,7 @@ def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
 
 @triton.autotune(configs=_GEMV_CONFIGS, key=_GEMV_KEY)
 @triton.jit
-def _gemv_indexed_kernel(RAW8, RAWI, W16, X, SLOTS, OUT, N, K, RB8, RB16, SLOT_BYTES,
+def _gemv_indexed_kernel(RAW8, RAWI, W16, GRID, KSGN, X, SLOTS, OUT, N, K, RB8, RB16, SLOT_BYTES,
                          Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
                          Q2_0: tl.constexpr, MXFP4: tl.constexpr,
                          BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
@@ -315,7 +362,7 @@ def _gemv_indexed_kernel(RAW8, RAWI, W16, X, SLOTS, OUT, N, K, RB8, RB16, SLOT_B
         x = tl.load(X + re.to(tl.int64) * K + rk, mask=mk, other=0.0)
         b = (rk // BS)[None, :]
         e = (rk % BS)[None, :]
-        w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, Q2_0, MXFP4,
+        w = _decode(RAW8, RAWI, W16, GRID, KSGN, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, Q2_0, MXFP4,
                     BB, WPB, QS, MS, QHB, KQ, DW, DMW, SCL, HMB)
         acc += tl.sum(tl.where(mk[None, :], w, 0.0) * x[None, :], axis=1)
     tl.store(OUT + re.to(tl.int64) * N + rn, acc, mask=mr)
@@ -327,13 +374,20 @@ def _views(raw: torch.Tensor):
     return raw, raw.view(torch.int8), raw.view(torch.uint16)
 
 
+def _iq_ptrs(qtype: str, raw: torch.Tensor):
+    """Device grid/ksigns tensors for grid types, dummy (raw) pointers otherwise."""
+    g, k = _iq_tables(qtype, raw.device)
+    return raw if g is None else g, raw if k is None else k
+
+
 def dequant_native(qtype: str, raw: torch.Tensor, out: torch.Tensor) -> None:
     """raw [N, row_bytes] uint8 GGUF -> out [N, K] (bf16 or float32)."""
     n, rb = raw.shape
     k = out.shape[-1]
     w8, wi, w16 = _views(raw)
+    (g, sg) = _iq_ptrs(qtype, raw)
     grid = (triton.cdiv(n, 32), triton.cdiv(k, 256))
-    _dequant_kernel[grid](w8, wi, w16, out, out, n, k, rb, rb // 2,
+    _dequant_kernel[grid](w8, wi, w16, g, sg, out, out, n, k, rb, rb // 2,
                           BLOCK_N=32, BLOCK_K=256, HAS_IDX=False, **_jit_args(qtype), num_warps=8)
 
 
@@ -342,8 +396,9 @@ def rows_dequant_native(qtype: str, raw: torch.Tensor, idx: torch.Tensor, out: t
     n, rb = raw.shape
     m, k = out.shape
     w8, wi, w16 = _views(raw)
+    (g, sg) = _iq_ptrs(qtype, raw)
     grid = (triton.cdiv(m, 32), triton.cdiv(k, 256))
-    _dequant_kernel[grid](w8, wi, w16, out, idx, m, k, rb, rb // 2,
+    _dequant_kernel[grid](w8, wi, w16, g, sg, out, idx, m, k, rb, rb // 2,
                           BLOCK_N=32, BLOCK_K=256, HAS_IDX=True, **_jit_args(qtype), num_warps=8)
 
 
@@ -352,8 +407,9 @@ def gemv_native(qtype: str, raw: torch.Tensor, x: torch.Tensor, y: torch.Tensor)
     n, rb = raw.shape
     k = x.numel()
     w8, wi, w16 = _views(raw)
+    (g, sg) = _iq_ptrs(qtype, raw)
     _gemv_kernel[lambda meta: (triton.cdiv(n, meta["BLOCK_N"]),)](
-        w8, wi, w16, x, y, n, k, rb, rb // 2, **_jit_args(qtype))
+        w8, wi, w16, g, sg, x, y, n, k, rb, rb // 2, **_jit_args(qtype))
 
 
 def gemv_indexed_native(qtype: str, w_stack: torch.Tensor, x: torch.Tensor,
@@ -362,8 +418,9 @@ def gemv_indexed_native(qtype: str, w_stack: torch.Tensor, x: torch.Tensor,
     s, n, rb = w_stack.shape
     e, k = x.shape
     w8, wi, w16 = _views(w_stack.reshape(s * n, rb))
+    (g, sg) = _iq_ptrs(qtype, w_stack.reshape(s * n, rb))
     grid = lambda meta: (e, triton.cdiv(n, meta["BLOCK_N"]))
-    _gemv_indexed_kernel[grid](w8, wi, w16, x, slots, out, n, k, rb, rb // 2, n * rb,
+    _gemv_indexed_kernel[grid](w8, wi, w16, g, sg, x, slots, out, n, k, rb, rb // 2, n * rb,
                                **_jit_args(qtype))
 
 

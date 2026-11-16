@@ -28,6 +28,9 @@ _SCALE_WORDS = {
     # S11 types with an fp16 d (MXFP4 has no fp16 field, see make_test_blocks)
     "IQ4_XS": (0,),
     "Q2_0": (0,),
+    # S12 grid types with an fp16 d
+    "IQ3_XXS": (0,),
+    "IQ2_S": (0,),
 }
 
 
