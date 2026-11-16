@@ -370,8 +370,9 @@ class MoE:
     rank computes the same top-k, filters to its own experts (expert
     parallel, C5) and the cross-rank sum is one `tp.all_reduce` at the end.
     `shared`, when given, is a triple (gate, up, down) of `QWeight`s for a
-    dense FFN every rank computes on every token, added before the
-    all_reduce.
+    dense FFN every rank computes on every token; it is fully replicated
+    (`make_qweight` does not shard), so it is added after the `all_reduce`
+    — adding it before would multiply it by the world size.
 
     Decode (M = 1): the top-k lands on the host with one sync per layer
     (C5), so the layer can batch local experts for `resolve`: residents in
@@ -452,9 +453,10 @@ class MoE:
             gemv_indexed(self.down.qtype, self.store.bufs[self.layer]["down"], a, slots, d)
             wts = torch.tensor([wt for _, wt in b], dtype=torch.float32, device=dev)
             y += (d * wts[:, None]).sum(0)
-        if self.shared is not None:
-            y += self._shared_out(x)[0]
-        return self.tp.all_reduce(y)
+        y = self.tp.all_reduce(y)
+        if self.shared is not None:  # replicated: add once, after the reduce
+            y = y + self._shared_out(x)[0]
+        return y
 
     def prefill(self, x: torch.Tensor) -> torch.Tensor:
         """Token chunk: x [T, k] f32 -> [T, k] f32 summed over ranks."""
@@ -473,9 +475,10 @@ class MoE:
                          self._gemm(self.up, slot, xt))
             d = self._gemm(self.down, slot, a)
             y.index_add_(0, r, d * torch.from_numpy(wts).to(dev)[:, None])
-        if self.shared is not None:
-            y += self._shared_out(x)
-        return self.tp.all_reduce(y)
+        y = self.tp.all_reduce(y)
+        if self.shared is not None:  # replicated: add once, after the reduce
+            y = y + self._shared_out(x)
+        return y
 
     def _gemm(self, group: ExpertGroup, slot: int, x: torch.Tensor) -> torch.Tensor:
         """Prefill M>1 path (C2): dequant one slot into bf16 scratch, F.linear."""
