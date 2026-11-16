@@ -1,0 +1,70 @@
+== start 01:00:16
+== ref exit 0 (01:01:09)
+1224 results/jobs/S8-1/ref.txt
+== server launcher pid 795675 (01:01:09)
+== health: {"status": "ok", "model": "gemma-4-31B-it-Q8_0"} (01:01:54)
+    def test_stream_equals_completion():
+        content, finish, nchunks = stream(dict(REQ, stream=True))
+        body = post(REQ)
+        assert content == body["choices"][0]["message"]["content"]   # byte for byte
+>       assert finish == body["choices"][0]["finish_reason"] == "length"
+E       AssertionError: assert 'stop' == 'length'
+E         
+E         - length
+E         + stop
+
+tests/gpu/test_server_live.py:88: AssertionError
+__________________________ test_stop_string_truncates __________________________
+
+    def test_stop_string_truncates():
+        word = REF.split()[3]
+        full = post(REQ)["choices"][0]["message"]["content"]
+        body = post(dict(REQ, stop=[word]))
+        content = body["choices"][0]["message"]["content"]
+        assert body["choices"][0]["finish_reason"] == "stop"
+>       assert len(content) < len(full) and full.startswith(content)
+E       assert (248 < 248)
+E        +  where 248 = len("Ciao! Sono un'intelligenza artificiale addestrata da Google, progettata per aiutarti a generare testi, rispondere a d...lvere problemi. Posso conversare in molte lingue e supportarti in un'ampia varietà di attività creative e informative.")
+E        +  and   248 = len("Ciao! Sono un'intelligenza artificiale addestrata da Google, progettata per aiutarti a generare testi, rispondere a d...lvere problemi. Posso conversare in molte lingue e supportarti in un'ampia varietà di attività creative e informative.")
+
+tests/gpu/test_server_live.py:107: AssertionError
+=========================== short test summary info ============================
+FAILED tests/gpu/test_server_live.py::test_greedy_matches_cli_generate - Asse...
+FAILED tests/gpu/test_server_live.py::test_stream_equals_completion - Asserti...
+FAILED tests/gpu/test_server_live.py::test_stop_string_truncates - assert (24...
+3 failed, 2 passed in 11.55s
+== pytest live exit 1 (01:02:06)
+== arresto server (01:02:06)
+== server launcher exit 0 (01:02:08)
+== 'server stopped cleanly' righe: 1
+[pynference] POST /v1/chat/completions -> 54 tok (prompt 22, finish stop, stream)
+[pynference] POST /v1/chat/completions -> 54 tok (prompt 22, finish stop)
+[pynference] POST /v1/chat/completions -> 8 tok (prompt 22, finish length)
+[pynference] POST /v1/chat/completions -> 8 tok (prompt 22, finish length)
+[pynference] POST /v1/chat/completions -> 8 tok (prompt 27, finish length)
+[pynference] POST /v1/chat/completions -> 54 tok (prompt 22, finish stop)
+[pynference] POST /v1/chat/completions -> 54 tok (prompt 22, finish stop)
+[pynference] server stopped cleanly
+.................                                                        [100%]
+17 passed, 1 skipped in 10.66s
+== pytest gpu exit 0 (01:02:19)
+== regress exit 0 (01:03:58)
+== regress gemma4: ours --ref (graph) 01:02:19
+  loaded 50/60 layers (19s)
+  loaded 60/60 layers (25s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (01:03:14)
+== regress gemma4: ppl 01:03:14
+== ppl exit 0 (01:03:58)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 12.1s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 01:03:58
