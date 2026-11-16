@@ -7,5 +7,10 @@ they are repacked for faster GEMV (see `q8_0`).
 from __future__ import annotations
 
 from .q8_0 import QLinear, q8_0_to_device
+from .types import QType, TYPES, check_split, row_bytes
+from .weight import (F32QWeight, HalfQWeight, NativeQWeight, QWeight,
+                     gemv_indexed, make_qweight)
 
-__all__ = ["QLinear", "q8_0_to_device"]
+__all__ = ["QType", "TYPES", "check_split", "row_bytes", "QWeight",
+           "NativeQWeight", "HalfQWeight", "F32QWeight", "make_qweight",
+           "gemv_indexed", "QLinear", "q8_0_to_device"]

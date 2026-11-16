@@ -76,7 +76,12 @@ class _Scratch:
 
 
 class QLinear:
-    """y = x @ W^T for a Q8_0 weight W [N, K] held as int8 + fp16 block scales."""
+    """y = x @ W^T for a Q8_0 weight W [N, K] held as int8 + fp16 block scales.
+
+    A QWeight (C2) with the one repacked layout, used for dense Q8_0 weights.
+    """
+
+    qtype = "Q8_0"
 
     def __init__(self, qs: torch.Tensor, d: torch.Tensor):
         self.qs, self.d = qs, d
