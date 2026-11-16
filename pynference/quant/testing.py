@@ -19,6 +19,12 @@ _SCALE_WORDS = {
     "Q5_1": (0, 1),
     "Q8_0": (0,),
     "IQ4_NL": (0,),
+    # K-quant super-blocks: d (and dmin) fp16 words inside the 256-element block
+    "Q2_K": (40, 41),
+    "Q3_K": (54,),
+    "Q4_K": (0, 1),
+    "Q5_K": (0, 1),
+    "Q6_K": (104,),
 }
 
 

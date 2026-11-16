@@ -26,6 +26,11 @@ TYPES: dict[str, QType] = {t.name: t for t in [
     QType("Q8_0", 8, 32, 34),
     QType("BF16", 30, 1, 2),
     QType("IQ4_NL", 20, 32, 18),
+    QType("Q2_K", 10, 256, 84),
+    QType("Q3_K", 11, 256, 110),
+    QType("Q4_K", 12, 256, 144),
+    QType("Q5_K", 13, 256, 176),
+    QType("Q6_K", 14, 256, 210),
 ]}
 
 
