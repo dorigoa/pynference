@@ -1,0 +1,42 @@
+== start 01:14:24
+== ref exit 0 (01:15:53)
+== ref righe 1, 251 byte
+== server launcher pid 812994 (01:15:53)
+== health: {"status": "ok", "model": "gemma-4-31B-it-Q8_0"} (01:16:38)
+.....                                                                    [100%]
+5 passed in 10.02s
+== pytest live exit 0 (01:16:48)
+== arresto server (01:16:48)
+== server launcher exit 0 (01:16:50)
+== 'server stopped cleanly' righe: 1
+[pynference] POST /v1/chat/completions -> 54 tok (prompt 22, finish stop, stream)
+[pynference] POST /v1/chat/completions -> 54 tok (prompt 22, finish stop)
+[pynference] POST /v1/chat/completions -> 8 tok (prompt 22, finish length)
+[pynference] POST /v1/chat/completions -> 8 tok (prompt 22, finish length)
+[pynference] POST /v1/chat/completions -> 8 tok (prompt 27, finish length)
+[pynference] POST /v1/chat/completions -> 54 tok (prompt 22, finish stop)
+[pynference] POST /v1/chat/completions -> 7 tok (prompt 22, finish stop)
+[pynference] server stopped cleanly
+.................                                                        [100%]
+17 passed, 1 skipped in 9.40s
+== pytest gpu exit 0 (01:17:00)
+== regress exit 0 (01:18:33)
+== regress gemma4: ours --ref (graph) 01:17:00
+  loaded 50/60 layers (19s)
+  loaded 60/60 layers (22s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (01:17:45)
+== regress gemma4: ppl 01:17:45
+== ppl exit 0 (01:18:33)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 14.1s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 01:18:33
