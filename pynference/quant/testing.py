@@ -46,6 +46,17 @@ def make_test_blocks(qtype: str, n: int, k: int, seed: int = 0) -> np.ndarray:
         f32 = rng.uniform(1e-3, 1e-1, (n, k)).astype(np.float32).view(np.uint32)
         return (f32 >> 16).astype(np.uint16).view(np.uint8).reshape(n, rb).copy()
 
+    if qtype == "MXFP4":
+        # row_bytes is odd when the row holds an odd number of blocks, so the
+        # uint16 view below is not usable; only the E8M0 byte matters and it is
+        # kept in [118, 138] (d = 2**(e-128) in [2^-10, 2^10], well-conditioned
+        # for GEMV against fp32). The 16 nibble bytes of each block stay random.
+        raw = rng.integers(0, 256, (n, rb), dtype=np.uint8)
+        nblocks = k // t.block
+        e_pos = np.arange(nblocks) * t.block_bytes     # the E8M0 byte of each block
+        raw[:, e_pos] = rng.integers(118, 139, (n, nblocks), dtype=np.uint8)
+        return raw
+
     raw = rng.integers(0, 256, (n, rb), dtype=np.uint8)
     words = raw.view(np.uint16)          # [n, rb // 2], rb is even for all block types
     nblocks = k // t.block

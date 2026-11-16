@@ -34,6 +34,10 @@ _LAYOUT = {
     "Q5_1":   dict(BB=24, WPB=12, QS=8, MS=1,    QHB=4),
     "IQ4_NL": dict(BB=18, WPB=9,  QS=2, MS=None, QHB=None),
     "Q8_0":   dict(BB=34, WPB=17, QS=2, MS=None, QHB=None),
+    # MXFP4 (S11): one E8M0 exponent byte, then 16 nibble bytes in E2M1
+    # (kvalues_fp4, doubled). BB=17 is odd, so the fp16 word view is not
+    # usable: the scale is loaded as a byte and turned into 2**(e-128).
+    "MXFP4":  dict(BB=17, WPB=8,  QS=1, MS=None, QHB=None),
     "Q2_K":   dict(BB=84,  WPB=42,  QS=16, MS=None, QHB=None,
                    BS=256, DW=40,  DMW=41, SCL=0,   HMB=None),
     "Q3_K":   dict(BB=110, WPB=55,  QS=32, MS=None, QHB=None,
@@ -66,6 +70,18 @@ def _iq4nl(nib):
     v = tl.where(nib == 13, 69.0, v)
     v = tl.where(nib == 14, 89.0, v)
     return tl.where(nib == 15, 113.0, v)
+
+
+@triton.jit
+def _fp4kv(nib):
+    # kvalues_fp4 from ggml-common.h (e2m1 values, doubled), used by MXFP4:
+    # magnitudes for nib & 7 are 0,1,2,3,4,6,8,12 and nib >= 8 negates
+    m = nib & 7
+    v = m.to(tl.float32)
+    v = tl.where(m == 5, 6.0, v)
+    v = tl.where(m == 6, 8.0, v)
+    v = tl.where(m == 7, 12.0, v)
+    return tl.where(nib >= 8, -v, v)
 
 
 @triton.jit
@@ -132,6 +148,7 @@ def _decode_k(RAW8, RAWI, W16, off8, b, e,
 @triton.jit
 def _decode(RAW8, RAWI, W16, off8, b, e, RB16,
             Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
+            Q2_0: tl.constexpr, MXFP4: tl.constexpr,
             BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
             MS: tl.constexpr, QHB: tl.constexpr,
             KQ: tl.constexpr, DW: tl.constexpr, DMW: tl.constexpr,
@@ -139,6 +156,15 @@ def _decode(RAW8, RAWI, W16, off8, b, e, RB16,
     """Float32 values of elements e (0..BS-1) of block b, rows at byte offset off8."""
     if KQ != "":
         return _decode_k(RAW8, RAWI, W16, off8, b, e, KQ, BB, WPB, QS, QHB, DW, DMW, SCL, HMB)
+    if MXFP4:
+        # d = ggml_e8m0_to_fp32_half(e): bit-for-bit the gguf-py trick, i.e.
+        # 2**(e-128) for every e in 0..255 (e=0,1 are denormal mantissas)
+        eb = tl.load(RAW8 + off8 + b * BB).to(tl.uint32)
+        bits = tl.where(eb < 2, 0x00200000 << eb, (eb - 1) << 23)
+        d = bits.to(tl.float32, bitcast=True)
+        byte = tl.load(RAW8 + off8 + b * BB + QS + (e % 16)).to(tl.int32)
+        nib = (byte >> tl.where(e >= 16, 4, 0)) & 0x0F
+        return _fp4kv(nib) * d
     off16 = off8 >> 1
     d = tl.load(W16 + off16 + b * WPB).to(tl.float16, bitcast=True).to(tl.float32)
     if Q8_0:
@@ -163,7 +189,8 @@ def _decode(RAW8, RAWI, W16, off8, b, e, RB16,
 def _jit_args(qtype: str) -> dict:
     L = _LAYOUT[qtype]
     return dict(Q8_0=qtype == "Q8_0", HAS_M=L["MS"] is not None, HAS_QH=L["QHB"] is not None,
-                IQ4=qtype == "IQ4_NL", BB=L["BB"], WPB=L["WPB"], QS=L["QS"],
+                IQ4=qtype == "IQ4_NL", Q2_0=qtype == "Q2_0", MXFP4=qtype == "MXFP4",
+                BB=L["BB"], WPB=L["WPB"], QS=L["QS"],
                 MS=L["MS"] if L["MS"] is not None else -1, QHB=L["QHB"] if L["QHB"] is not None else -1,
                 BS=L.get("BS", 32), KQ=qtype if L.get("BS", 32) == 256 else "",
                 DW=L.get("DW", 0), DMW=L["DMW"] if L.get("DMW") is not None else -1,
@@ -173,6 +200,7 @@ def _jit_args(qtype: str) -> dict:
 @triton.jit
 def _dequant_kernel(RAW8, RAWI, W16, OUT, IDX, M, K, RB8, RB16,
                     Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
+                    Q2_0: tl.constexpr, MXFP4: tl.constexpr,
                     BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
                     MS: tl.constexpr, QHB: tl.constexpr,
                     KQ: tl.constexpr, DW: tl.constexpr, DMW: tl.constexpr,
@@ -189,8 +217,8 @@ def _dequant_kernel(RAW8, RAWI, W16, OUT, IDX, M, K, RB8, RB16,
     off8 = (src * RB8)[:, None]
     b = (rk // BS)[None, :]
     e = (rk % BS)[None, :]
-    v = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, BB, WPB, QS, MS, QHB,
-                KQ, DW, DMW, SCL, HMB)
+    v = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, Q2_0, MXFP4,
+                BB, WPB, QS, MS, QHB, KQ, DW, DMW, SCL, HMB)
     m2 = nm[:, None] & (rk < K)[None, :]
     tl.store(OUT + rn.to(tl.int64)[:, None] * K + rk[None, :], v, mask=m2)
 
@@ -207,13 +235,14 @@ _GEMV_CONFIGS = [triton.Config({"BLOCK_N": bn, "BLOCK_K": bk}, num_warps=nw)
 
 # the type constexprs must be in the autotune key: the same (N, K) shape is
 # benchmarked with different configs for the nibble types vs Q5_0 vs Q8_0
-_GEMV_KEY = ["N", "K", "Q8_0", "HAS_M", "HAS_QH", "IQ4", "BB", "KQ"]
+_GEMV_KEY = ["N", "K", "Q8_0", "HAS_M", "HAS_QH", "IQ4", "Q2_0", "MXFP4", "BB", "KQ"]
 
 
 @triton.autotune(configs=_GEMV_CONFIGS, key=_GEMV_KEY)
 @triton.jit
 def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
                  Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
+                 Q2_0: tl.constexpr, MXFP4: tl.constexpr,
                  BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
                  MS: tl.constexpr, QHB: tl.constexpr,
                  KQ: tl.constexpr, DW: tl.constexpr, DMW: tl.constexpr,
@@ -229,8 +258,8 @@ def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
         x = tl.load(X + rk, mask=mk, other=0.0)
         b = (rk // BS)[None, :]
         e = (rk % BS)[None, :]
-        w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, BB, WPB, QS, MS,
-                    QHB, KQ, DW, DMW, SCL, HMB)
+        w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, Q2_0, MXFP4,
+                    BB, WPB, QS, MS, QHB, KQ, DW, DMW, SCL, HMB)
         acc += tl.sum(tl.where(nm[:, None] & mk[None, :], w, 0.0) * x[None, :], axis=1)
     tl.store(Y + rn, acc, mask=nm)
 
@@ -239,6 +268,7 @@ def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
 @triton.jit
 def _gemv_indexed_kernel(RAW8, RAWI, W16, X, SLOTS, OUT, N, K, RB8, RB16, SLOT_BYTES,
                          Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
+                         Q2_0: tl.constexpr, MXFP4: tl.constexpr,
                          BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
                          MS: tl.constexpr, QHB: tl.constexpr,
                          KQ: tl.constexpr, DW: tl.constexpr, DMW: tl.constexpr,
@@ -259,13 +289,15 @@ def _gemv_indexed_kernel(RAW8, RAWI, W16, X, SLOTS, OUT, N, K, RB8, RB16, SLOT_B
         x = tl.load(X + re.to(tl.int64) * K + rk, mask=mk, other=0.0)
         b = (rk // BS)[None, :]
         e = (rk % BS)[None, :]
-        w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, BB, WPB, QS, MS,
-                    QHB, KQ, DW, DMW, SCL, HMB)
+        w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, Q2_0, MXFP4,
+                    BB, WPB, QS, MS, QHB, KQ, DW, DMW, SCL, HMB)
         acc += tl.sum(tl.where(mk[None, :], w, 0.0) * x[None, :], axis=1)
     tl.store(OUT + re.to(tl.int64) * N + rn, acc, mask=mr)
 
 
 def _views(raw: torch.Tensor):
+    if raw.shape[-1] % 2:  # MXFP4 row_bytes can be odd: no uint16 view, W16 unused
+        return raw, raw.view(torch.int8), raw
     return raw, raw.view(torch.int8), raw.view(torch.uint16)
 
 
