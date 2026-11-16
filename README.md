@@ -43,6 +43,33 @@ answer a line reports the new prompt tokens (conversation history is reused,
 only the new tail is prefilled) and tok/s. `python -m pynference.cli generate`
 takes the same options as `python -m pynference.generate`.
 
+### OpenAI-compatible server
+
+```bash
+scripts/remote.sh 'torchrun --nproc_per_node=2 -m pynference.server \
+    -m /nvme/gguf/gemma-4-31B/gemma-4-31B-it-Q8_0.gguf --host 127.0.0.1 --port 8090'
+```
+
+Serves `GET /health`, `GET /v1/models` and `POST /v1/chat/completions` with the
+usual OpenAI fields (`messages`, `max_tokens` / `max_completion_tokens`,
+`temperature`, `top_p`, `top_k`, `min_p`, `seed`, `stop`, `stream`), including
+SSE streaming (`delta` chunks, `data: [DONE]`) and `usage`. One request at a
+time; the others queue. Defaults: `--ctx 8192`, `-n 512` max tokens (overridden
+per request), `--decode graph`. Stop with Ctrl-C / SIGTERM on rank 0 (waits for
+the running request, then all ranks exit with "server stopped cleanly").
+
+From the Mac, keep the PC-local bind and tunnel the port:
+
+```bash
+ssh -N -L 8090:127.0.0.1:8090 ubuntu   # in another terminal
+curl -s http://127.0.0.1:8090/health
+curl -s http://127.0.0.1:8090/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"model":"gemma","messages":[{"role":"user","content":"Ciao!"}],"stream":false}'
+```
+
+(`--host 0.0.0.0` exposes the server on the LAN without any auth: at your own
+risk.)
+
 ## Layout
 
 | Path | Content |
@@ -54,6 +81,7 @@ takes the same options as `python -m pynference.generate`.
 | `pynference/parallel.py` | one process per GPU, xccl all-reduce/all-gather |
 | `pynference/models/` | model architectures (`gemma4.py`) |
 | `pynference/generate.py` | command-line generation |
+| `pynference/server.py` | OpenAI-compatible HTTP server (rank 0 serves, others follow) |
 | `bench/ppl.py` | perplexity, same method as llama-perplexity |
 | `bench/compare_probs.py` | greedy tokens and top probabilities vs llama-server |
 | `bench/decode_profile.py` | decode time per token and per kernel |
@@ -75,7 +103,7 @@ Phase 0b (GGUF, Gemma 4): [docs/phase0b.md](docs/phase0b.md).
 
 ## Plan
 
-The remaining work (engine, server, quant types, GPT-OSS-120B, Qwen3.8-27B,
+The remaining work (quant types, GPT-OSS-120B, Qwen3.8-27B,
 Qwen3.8-Flash-Next) is in [docs/plans/pynference-plan.md](docs/plans/pynference-plan.md),
 in sections run by a local agent with
 `docs/plans/pynference/tools/run-sections.sh` (GPU jobs run while the LLM
