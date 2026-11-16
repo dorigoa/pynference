@@ -53,7 +53,8 @@ case $cmd in
     "$LL/llama-tokenize" -m "$model" -f "$file" --ids --log-disable 2>/dev/null | tail -n 1 ;;
   dump)
     model=$1; prompt=$2; out=$3; shift 3
-    "$LL/llama-eval-callback" -m "$model" -p "$prompt" -n 1 --no-warmup "${DEV[@]}" "$@" > "$out" 2>&1
+    # (llama-eval-callback non accetta --no-warmup: il warmup lo spegne già l'esempio)
+    "$LL/llama-eval-callback" -m "$model" -p "$prompt" -n 1 "${DEV[@]}" "$@" > "$out" 2>&1
     echo "dump: $(wc -l < "$out") lines in $out" ;;
   *)
     sed -n '2,22p' "$0"; exit 2 ;;
