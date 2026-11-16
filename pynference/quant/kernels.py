@@ -101,11 +101,13 @@ def _decode_k(RAW8, RAWI, W16, off8, b, e,
         hb = (hm >> g8) & 1  # bit g8 of hmask byte e&31 (gguf-py: offset when 0)
         return d * (sc - 32) * (q + 4 * hb - 4)
     if KQ == "Q6_K":  # x = d*sc_i8*((ql-nibble | qh2bits<<4) - 32)
-        n3 = (e >> 5) & 3  # nibble selector within each 128-element half
+        # within a 128-element half: 32 bytes of ql, then the other 32; low
+        # nibbles for p<2, high nibbles for p>=2, where p = (e>>5)&3
+        n3 = (e >> 5) & 3
         lo = tl.load(RAW8 + off8 + b * BB + QS + ((e >> 7) << 6)
-                     + ((n3 >> 1) << 5) + (e & 31)).to(tl.int32)
+                     + ((n3 & 1) << 5) + (e & 31)).to(tl.int32)
         hi = tl.load(RAW8 + off8 + b * BB + QHB + ((e >> 7) << 5) + (e & 31)).to(tl.int32)
-        q6 = ((lo >> ((n3 & 1) * 4)) & 0xF) | (((hi >> (n3 * 2)) & 3) << 4)
+        q6 = ((lo >> ((n3 >> 1) * 4)) & 0xF) | (((hi >> (n3 * 2)) & 3) << 4)
         sc = tl.load(RAWI + off8 + b * BB + SCL + g16).to(tl.float32)
         return d * sc * (q6 - 32.0)
     # Q4_K and Q5_K: 8 sub-blocks of 32, scales and mins at 6 bits (12 bytes):

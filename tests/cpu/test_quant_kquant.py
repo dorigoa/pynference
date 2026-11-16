@@ -3,7 +3,7 @@
 gguf-py is the reference for the Triton kernel, but the element -> (sub-block,
 byte, bit) mappings of the K-quants are easy to get wrong in the same way twice
 (S9 lesson: an index typo costs a whole GPU job). The numpy decode below is
-written straight from `dequantize_row_q4_K` / `dequantize_row_q5_K` in
+written straight from `dequantize_row_q4_K`, `q5_K` and `q6_K` in
 ggml-quants.c, so a mismatch between it and gguf-py pins the layout down.
 """
 import numpy as np
@@ -44,22 +44,48 @@ def hand_kquant(raw, qtype, n, k):
     return (d * sc * q - dmin * mn).reshape(n, k).astype(np.float32)
 
 
-@pytest.mark.parametrize("qtype", ["Q4_K", "Q5_K"])
+def hand_q6(raw, n, k):
+    """x = d*sc_int8*((ql-nibble | qh 2 bits<<4) - 32) (Q6_K).
+
+    ggml-quants.c loops over 32 bytes l of ql twice (l and l+32) and takes the
+    low nibbles for p<2, the high ones for p>=2 (p = (e>>5)&3); the 2 high bits
+    of the value come from byte l of qh at shift 2*p.
+    """
+    blk = raw.reshape(n, -1, TYPES["Q6_K"].block_bytes)
+    e = np.arange(256)
+    p = (e >> 5) & 3
+    ql = blk[..., ((e >> 7) << 6) + ((p & 1) << 5) + (e & 31)]
+    qh = blk[..., 128 + ((e >> 7) << 5) + (e & 31)]
+    q6 = ((ql >> ((p >> 1) * 4)) & 0xF) | (((qh >> (p * 2)) & 3) << 4)
+    sc = blk[..., 192:208].view(np.int8)[..., e >> 4]     # signed scale per 16
+    d = _fp16(blk, 208)[..., None]
+    return (d * sc * (q6 - 32)).reshape(n, k).astype(np.float32)
+
+
+def hand(raw, qtype, n, k):
+    return hand_q6(raw, n, k) if qtype == "Q6_K" else hand_kquant(raw, qtype, n, k)
+
+
+# fp16 scale fields of each type, as byte offsets inside one super-block
+_FP16_BYTES = {"Q4_K": (0, 2), "Q5_K": (0, 2), "Q6_K": (208,)}
+
+
+@pytest.mark.parametrize("qtype", ["Q4_K", "Q5_K", "Q6_K"])
 def test_kquant_layout(qtype):
     raw = make_test_blocks(qtype, N, K, seed=11)
     assert raw.shape == (N, row_bytes(qtype, K))
     assert TYPES[qtype].block == 256 and row_bytes(qtype, 512) == 2 * TYPES[qtype].block_bytes
     ref = ref_dequant(raw, qtype)
     assert ref.shape == (N, K) and np.isfinite(ref).all()
-    assert np.allclose(ref, hand_kquant(raw, qtype, N, K), rtol=1e-6, atol=0)
+    assert np.allclose(ref, hand(raw, qtype, N, K), rtol=1e-6, atol=0)
 
 
-@pytest.mark.parametrize("qtype", ["Q4_K", "Q5_K"])
+@pytest.mark.parametrize("qtype", ["Q4_K", "Q5_K", "Q6_K"])
 def test_kquant_scales_in_range(qtype):
-    """make_test_blocks must keep both fp16 fields of every super-block finite."""
+    """make_test_blocks must keep every fp16 field of every super-block finite."""
     raw = make_test_blocks(qtype, N, K, seed=5)
     blk = raw.reshape(N, -1, TYPES[qtype].block_bytes)
-    for byte in (0, 2):
+    for byte in _FP16_BYTES[qtype]:
         v = _fp16(blk, byte)
         assert (v >= 1e-3).all() and (v <= 1e-1).all()
 
