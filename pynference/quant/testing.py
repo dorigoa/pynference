@@ -25,6 +25,8 @@ _SCALE_WORDS = {
     "Q4_K": (0, 1),
     "Q5_K": (0, 1),
     "Q6_K": (104,),
+    # S11 types with an fp16 d (MXFP4 has no fp16 field, see make_test_blocks)
+    "IQ4_XS": (0,),
 }
 
 

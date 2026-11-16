@@ -1,8 +1,9 @@
-"""S11 step 1: the MXFP4 block layout checked against a numpy decode.
+"""S11: MXFP4 and IQ4_XS block layouts checked against numpy decodes.
 
 Same pattern as test_quant_kquant.py (S10 lesson): gguf-py is the GPU-kernel
-reference, so a second decode written straight from `dequantize_row_mxfp4` in
-ggml-quants.c pins the byte/bit layout down against it.
+reference, so a second decode written straight from `dequantize_row_mxfp4`
+and `dequantize_row_iq4_xs` in ggml-quants.c pins the byte/bit layout down
+against it.
 """
 import numpy as np
 import pytest
@@ -15,6 +16,12 @@ N, K = 3, 512
 
 KVALUES_FP4 = np.array((0, 1, 2, 3, 4, 6, 8, 12, 0, -1, -2, -3, -4, -6, -8, -12),
                        dtype=np.int8)
+KVALUES_IQ4NL = np.array((-127, -104, -83, -65, -49, -35, -22, -10,
+                          1, 13, 25, 38, 53, 69, 89, 113), dtype=np.int8)
+
+
+def _fp16(blk, byte):
+    return blk[..., byte:byte + 2].copy().view(np.float16).astype(np.float32)[..., 0]
 
 
 def hand_mxfp4(raw, n, k):
@@ -34,12 +41,30 @@ def hand_mxfp4(raw, n, k):
     return (d * x.astype(np.float32)).reshape(n, k).astype(np.float32)
 
 
-def test_layout_vs_ggufpy():
-    raw = make_test_blocks("MXFP4", N, K, seed=11)
-    assert raw.shape == (N, row_bytes("MXFP4", K))
-    ref = ref_dequant(raw, "MXFP4")
+def hand_iq4_xs(raw, n, k):
+    """x = d*(ls-32)*kvalues_iq4nl[q], 8 sub-blocks of 32 (dequantize_row_iq4_xs)."""
+    blk = raw.reshape(n, -1, TYPES["IQ4_XS"].block_bytes)
+    e = np.arange(256)
+    ib = e >> 5                                   # sub-block of the element
+    sh = blk[..., 2:4].copy().view(np.uint16)[..., 0].astype(np.int32)[..., None]  # scales_h
+    sl = blk[..., 4:8]                                # scales_l (4 bytes)
+    ls = ((sl[..., ib >> 1] >> (4 * (ib % 2))) & 0xF) | (((sh >> (2 * ib)) & 3) << 4)
+    qb = blk[..., 8 + ((e >> 5) << 4) + (e & 15)]
+    nib = (qb >> (((e >> 4) & 1) * 4)) & 0xF
+    d = _fp16(blk, 0)[..., None]
+    return (d * (ls - 32) * KVALUES_IQ4NL[nib]).reshape(n, k).astype(np.float32)
+
+
+HAND = {"MXFP4": hand_mxfp4, "IQ4_XS": hand_iq4_xs}
+
+
+@pytest.mark.parametrize("qtype", list(HAND))
+def test_layout_vs_ggufpy(qtype):
+    raw = make_test_blocks(qtype, N, K, seed=11)
+    assert raw.shape == (N, row_bytes(qtype, K))
+    ref = ref_dequant(raw, qtype)
     assert ref.shape == (N, K) and np.isfinite(ref).all()
-    assert np.allclose(ref, hand_mxfp4(raw, N, K), rtol=1e-6, atol=0)
+    assert np.allclose(ref, HAND[qtype](raw, N, K), rtol=1e-6, atol=0)
 
 
 def test_mxfp4_registry_and_odd_rows():

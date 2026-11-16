@@ -48,6 +48,11 @@ _LAYOUT = {
                    BS=256, DW=0,   DMW=1,  SCL=4,   HMB=None),
     "Q6_K":   dict(BB=210, WPB=105, QS=0,  MS=None, QHB=128,
                    BS=256, DW=104, DMW=None, SCL=192, HMB=None),
+    # IQ4_XS (S11): d fp16, scales_h uint16 (word 1), scales_l 4 bytes, qs 128
+    # bytes; 8 sub-blocks of 32 share a 6-bit scale = low nibble of scales_l
+    # (shifted) | 2 bits of scales_h at 2*sub-block, value via kvalues_iq4nl.
+    "IQ4_XS": dict(BB=136, WPB=68, QS=8,  MS=None, QHB=None,
+                   BS=256, DW=0,   DMW=None, SCL=4,  HMB=None),
 }
 
 
@@ -97,6 +102,14 @@ def _decode_k(RAW8, RAWI, W16, off8, b, e,
     """
     off16 = off8 >> 1
     d = tl.load(W16 + off16 + b * WPB + DW).to(tl.float16, bitcast=True).to(tl.float32)
+    if KQ == "IQ4_XS":  # x = d*(ls-32)*kvalues_iq4nl[q], ls 6-bit per 32 (dequantize_row_iq4_xs)
+        ib = e >> 5
+        sh = tl.load(W16 + off16 + b * WPB + 1).to(tl.int32)          # scales_h (bytes 2-3)
+        sl = tl.load(RAW8 + off8 + b * BB + SCL + (ib >> 1)).to(tl.int32)
+        ls = ((sl >> ((ib & 1) * 4)) & 0xF) | (((sh >> (2 * ib)) & 3) << 4)
+        qb = tl.load(RAW8 + off8 + b * BB + QS + (ib << 4) + (e & 15)).to(tl.int32)
+        nib = (qb >> (((e >> 4) & 1) * 4)) & 0x0F
+        return d * (ls - 32).to(tl.float32) * _iq4nl(nib)
     g8 = e >> 5
     g16 = e >> 4
     if KQ == "Q2_K":  # 16 sub-blocks of 16: x = d*(sc&15)*q - dmin*(sc>>4)
