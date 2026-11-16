@@ -79,7 +79,8 @@ originale 4096 (beta_fast 32, beta_slow 1, attn_factor assente), sliding window
 ## 8. Impatto sulla nostra implementazione (passi 2-3)
 - TP (piano 3.4): righe di Q,K,V divise per teste [q_r; k_r; v_r]; O con colonne
   di input divise + bias solo su rank0 prima dell'all_reduce; embd e output su
-  righe di vocabolario; norme e sink replicati.
+  righe di vocabolario; norme replicate; sink tagliati per le teste Q del rank
+  (sono per testa Q: il rank tiene sinks[r·n_head_l : (r+1)·n_head_l]).
 - Una sola tabella YaRN cos/sin [max_ctx, 64] (mscale inclusa), coppie NEOX
   (i, i+32), identica per tutti i layer.
 - `attn_decode` (pynference/kernels.py:200): aggiungere `sinks=None`; la finestra
