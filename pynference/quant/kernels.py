@@ -15,14 +15,19 @@ from .types import TYPES, row_bytes
 
 # Fields of one GGUF block, in bytes/words (a word = 2 bytes):
 # BB  block bytes, WPB = BB // 2 words per block, QS byte offset of the
-# quantized data, MS word offset of m (None: none), QHW word offset of qh.
+# quantized data, MS word offset of m (None: none), QHB byte offset of the
+# 4 qh bytes (None: none). The 5th bit of element e is bit e & 7 of the qh
+# byte e >> 3 (little-endian), i.e. the same bit e of the uint32 that
+# ggml-quants.c loads as two uint16 words; byte access keeps the Triton
+# load pattern identical to the nibble bytes (much faster than uint16
+# gathers with 32-bit shifts on Intel XPU: Q5_0 GEMV was 24 GB/s vs 193).
 _LAYOUT = {
-    "Q4_0":   dict(BB=18, WPB=9,  QS=2, MS=None, QHW=None),
-    "Q4_1":   dict(BB=20, WPB=10, QS=4, MS=1,    QHW=None),
-    "Q5_0":   dict(BB=22, WPB=11, QS=6, MS=None, QHW=1),
-    "Q5_1":   dict(BB=24, WPB=12, QS=8, MS=1,    QHW=2),
-    "IQ4_NL": dict(BB=18, WPB=9,  QS=2, MS=None, QHW=None),
-    "Q8_0":   dict(BB=34, WPB=17, QS=2, MS=None, QHW=None),
+    "Q4_0":   dict(BB=18, WPB=9,  QS=2, MS=None, QHB=None),
+    "Q4_1":   dict(BB=20, WPB=10, QS=4, MS=1,    QHB=None),
+    "Q5_0":   dict(BB=22, WPB=11, QS=6, MS=None, QHB=2),
+    "Q5_1":   dict(BB=24, WPB=12, QS=8, MS=1,    QHB=4),
+    "IQ4_NL": dict(BB=18, WPB=9,  QS=2, MS=None, QHB=None),
+    "Q8_0":   dict(BB=34, WPB=17, QS=2, MS=None, QHB=None),
 }
 
 
@@ -51,7 +56,7 @@ def _iq4nl(nib):
 def _decode(RAW8, RAWI, W16, off8, b, e, RB16,
             Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
             BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
-            MS: tl.constexpr, QHW: tl.constexpr):
+            MS: tl.constexpr, QHB: tl.constexpr):
     """Float32 values of elements e (0..31) of block b, rows at byte offset off8."""
     off16 = off8 >> 1
     d = tl.load(W16 + off16 + b * WPB).to(tl.float16, bitcast=True).to(tl.float32)
@@ -61,10 +66,8 @@ def _decode(RAW8, RAWI, W16, off8, b, e, RB16,
     byte = tl.load(RAW8 + off8 + b * BB + QS + (e % 16)).to(tl.int32)
     nib = (byte >> tl.where(e >= 16, 4, 0)) & 0x0F
     if HAS_QH:
-        lo = tl.load(W16 + off16 + b * WPB + QHW).to(tl.uint32)
-        hi = tl.load(W16 + off16 + b * WPB + QHW + 1).to(tl.uint32)
-        qh = lo | (hi << 16)
-        nib = nib | (((qh >> e.to(tl.uint32)) & 1).to(tl.int32) << 4)
+        qb = tl.load(RAW8 + off8 + b * BB + QHB + (e >> 3)).to(tl.int32)
+        nib = nib | (((qb >> (e & 7)) & 1) << 4)
     v = nib.to(tl.float32)
     if IQ4:
         return _iq4nl(nib) * d
@@ -78,16 +81,16 @@ def _decode(RAW8, RAWI, W16, off8, b, e, RB16,
 
 def _jit_args(qtype: str) -> dict:
     L = _LAYOUT[qtype]
-    return dict(Q8_0=qtype == "Q8_0", HAS_M=L["MS"] is not None, HAS_QH=L["QHW"] is not None,
+    return dict(Q8_0=qtype == "Q8_0", HAS_M=L["MS"] is not None, HAS_QH=L["QHB"] is not None,
                 IQ4=qtype == "IQ4_NL", BB=L["BB"], WPB=L["WPB"], QS=L["QS"],
-                MS=L["MS"] if L["MS"] is not None else -1, QHW=L["QHW"] if L["QHW"] is not None else -1)
+                MS=L["MS"] if L["MS"] is not None else -1, QHB=L["QHB"] if L["QHB"] is not None else -1)
 
 
 @triton.jit
 def _dequant_kernel(RAW8, RAWI, W16, OUT, IDX, M, K, RB8, RB16,
                     Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
                     BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
-                    MS: tl.constexpr, QHW: tl.constexpr,
+                    MS: tl.constexpr, QHB: tl.constexpr,
                     BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr, HAS_IDX: tl.constexpr):
     rn = tl.program_id(0) * BLOCK_N + tl.arange(0, BLOCK_N)
     rk = tl.program_id(1) * BLOCK_K + tl.arange(0, BLOCK_K)
@@ -100,7 +103,7 @@ def _dequant_kernel(RAW8, RAWI, W16, OUT, IDX, M, K, RB8, RB16,
     off8 = (src * RB8)[:, None]
     b = (rk // 32)[None, :]
     e = (rk % 32)[None, :]
-    v = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, BB, WPB, QS, MS, QHW)
+    v = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, BB, WPB, QS, MS, QHB)
     m2 = nm[:, None] & (rk < K)[None, :]
     tl.store(OUT + rn.to(tl.int64)[:, None] * K + rk[None, :], v, mask=m2)
 
@@ -120,7 +123,7 @@ _GEMV_KEY = ["N", "K", "Q8_0", "HAS_M", "HAS_QH", "IQ4", "BB"]
 def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
                  Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
                  BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
-                 MS: tl.constexpr, QHW: tl.constexpr,
+                 MS: tl.constexpr, QHB: tl.constexpr,
                  BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr):
     rn = tl.program_id(0) * BLOCK_N + tl.arange(0, BLOCK_N)
     nm = rn < N
@@ -132,7 +135,7 @@ def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
         x = tl.load(X + rk, mask=mk, other=0.0)
         b = (rk // 32)[None, :]
         e = (rk % 32)[None, :]
-        w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, BB, WPB, QS, MS, QHW)
+        w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, BB, WPB, QS, MS, QHB)
         acc += tl.sum(tl.where(nm[:, None] & mk[None, :], w, 0.0) * x[None, :], axis=1)
     tl.store(Y + rn, acc, mask=nm)
 
@@ -142,7 +145,7 @@ def _gemv_kernel(RAW8, RAWI, W16, X, Y, N, K, RB8, RB16,
 def _gemv_indexed_kernel(RAW8, RAWI, W16, X, SLOTS, OUT, N, K, RB8, RB16, SLOT_BYTES,
                          Q8_0: tl.constexpr, HAS_M: tl.constexpr, HAS_QH: tl.constexpr, IQ4: tl.constexpr,
                          BB: tl.constexpr, WPB: tl.constexpr, QS: tl.constexpr,
-                         MS: tl.constexpr, QHW: tl.constexpr,
+                         MS: tl.constexpr, QHB: tl.constexpr,
                          BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr):
     re = tl.program_id(0)
     rn = tl.program_id(1) * BLOCK_N + tl.arange(0, BLOCK_N)
@@ -155,7 +158,7 @@ def _gemv_indexed_kernel(RAW8, RAWI, W16, X, SLOTS, OUT, N, K, RB8, RB16, SLOT_B
         x = tl.load(X + re.to(tl.int64) * K + rk, mask=mk, other=0.0)
         b = (rk // 32)[None, :]
         e = (rk % 32)[None, :]
-        w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, BB, WPB, QS, MS, QHW)
+        w = _decode(RAW8, RAWI, W16, off8, b, e, RB16, Q8_0, HAS_M, HAS_QH, IQ4, BB, WPB, QS, MS, QHB)
         acc += tl.sum(tl.where(mk[None, :], w, 0.0) * x[None, :], axis=1)
     tl.store(OUT + re.to(tl.int64) * N + rn, acc)
 

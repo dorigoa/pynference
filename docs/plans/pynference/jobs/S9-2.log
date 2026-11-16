@@ -1,0 +1,113 @@
+== start 02:17:41
+RES Q4_0 deq=0.00e+00 deq_rows=0.00e+00
+.RES Q4_1 deq=0.00e+00 deq_rows=0.00e+00
+.RES Q5_0 deq=0.00e+00 deq_rows=0.00e+00
+.RES Q5_1 deq=0.00e+00 deq_rows=0.00e+00
+.RES IQ4_NL deq=0.00e+00 deq_rows=0.00e+00
+.RES Q8_0 deq=0.00e+00 deq_rows=0.00e+00
+.RES Q4_0 gemv=4.22e-07
+.RES Q4_1 gemv=5.17e-07
+.RES Q5_0 gemv=4.47e-07
+.RES Q5_1 gemv=6.44e-07
+.RES IQ4_NL gemv=3.22e-07
+.RES Q8_0 gemv=3.77e-07
+.RES Q4_0 gemv_idx=2.41e-07
+.RES Q4_1 gemv_idx=2.21e-07
+.RES Q5_0 gemv_idx=2.38e-07
+.RES Q5_1 gemv_idx=1.41e-07
+.RES IQ4_NL gemv_idx=1.73e-07
+.RES Q8_0 gemv_idx=2.01e-07
+.RES Q4_0 real token_embd.weight 256x5120 deq=0.00e+00 gemv=2.56e-07
+.RES Q5_0 real blk.0.ffn_down_exps.weight 256x640 deq=0.00e+00 gemv=1.50e-07
+.RES IQ4_NL real blk.7.ffn_down_exps.weight 256x640 deq=0.00e+00 gemv=2.54e-07
+.RES F16 gemv=4.03e-07
+.RES BF16 gemv=2.81e-07
+.RES Q4_0 gbps=240.5 (24.8 MB)
+.RES Q4_1 gbps=144.0 (27.5 MB)
+.RES Q5_0 gbps=24.5 (30.3 MB)
+FRES Q5_1 gbps=193.1 (33.0 MB)
+.RES IQ4_NL gbps=143.5 (24.8 MB)
+.RES Q8_0 gbps=516.1 (46.8 MB)
+.
+=================================== FAILURES ===================================
+_____________________________ test_bandwidth[Q5_0] _____________________________
+
+qtype = 'Q5_0'
+
+    @pytest.mark.parametrize("qtype", NATIVE)
+    def test_bandwidth(qtype):
+        import time
+        n, k = 8192, 5376
+        raw = make_test_blocks(qtype, n, k, seed=5)
+        w = _native(qtype, raw, n, k)
+        x = torch.randn(k, device=DEV)
+        y = torch.empty(1, n, dtype=torch.float32, device=DEV)
+        for _ in range(3):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        it = 20
+        t = time.perf_counter()
+        for _ in range(it):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        gbps = w.nbytes / ((time.perf_counter() - t) / it) / 1e9
+        print(f"RES {qtype} gbps={gbps:.1f} ({w.nbytes / 1e6:.1f} MB)")
+>       assert gbps > MIN_GBPS
+E       assert 24.53047625871889 > 100.0
+
+tests/gpu/test_quant_block32.py:145: AssertionError
+=========================== short test summary info ============================
+FAILED tests/gpu/test_quant_block32.py::test_bandwidth[Q5_0] - assert 24.5304...
+1 failed, 28 passed in 77.02s (0:01:17)
+== pytest block32 exit 1 (02:18:59)
+
+qtype = 'Q5_0'
+
+    @pytest.mark.parametrize("qtype", NATIVE)
+    def test_bandwidth(qtype):
+        import time
+        n, k = 8192, 5376
+        raw = make_test_blocks(qtype, n, k, seed=5)
+        w = _native(qtype, raw, n, k)
+        x = torch.randn(k, device=DEV)
+        y = torch.empty(1, n, dtype=torch.float32, device=DEV)
+        for _ in range(3):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        it = 20
+        t = time.perf_counter()
+        for _ in range(it):
+            kernels.gemv_native(qtype, w.raw, x, y)
+        torch.xpu.synchronize()
+        gbps = w.nbytes / ((time.perf_counter() - t) / it) / 1e9
+        print(f"RES {qtype} gbps={gbps:.1f} ({w.nbytes / 1e6:.1f} MB)")
+>       assert gbps > MIN_GBPS
+E       assert 24.64397296108228 > 100.0
+
+tests/gpu/test_quant_block32.py:145: AssertionError
+----------------------------- Captured stdout call -----------------------------
+RES Q5_0 gbps=24.6 (30.3 MB)
+=========================== short test summary info ============================
+FAILED tests/gpu/test_quant_block32.py::test_bandwidth[Q5_0] - assert 24.6439...
+1 failed, 45 passed, 1 skipped in 36.70s
+== pytest gpu exit 1 (02:19:36)
+== regress exit 0 (02:21:24)
+== regress gemma4: ours --ref (graph) 02:19:36
+  loaded 50/60 layers (24s)
+  loaded 60/60 layers (29s)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== ours exit 0 (02:20:29)
+== regress gemma4: ppl 02:20:29
+== ppl exit 0 (02:21:24)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 14.6s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== end 02:21:24
