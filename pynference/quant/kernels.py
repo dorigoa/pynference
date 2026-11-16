@@ -195,9 +195,14 @@ def _dequant_kernel(RAW8, RAWI, W16, OUT, IDX, M, K, RB8, RB16,
     tl.store(OUT + rn.to(tl.int64)[:, None] * K + rk[None, :], v, mask=m2)
 
 
+# 16-warp and BLOCK_K=1024 configs added for S10: the 2-bit Q2_K GEMV is
+# compute-bound (3.05 elements/byte, its 14.5 MB working set fits in L2),
+# so more warps and a wider k-tile help where the nibble types do not need them
 _GEMV_CONFIGS = [triton.Config({"BLOCK_N": bn, "BLOCK_K": bk}, num_warps=nw)
                  for bn, bk, nw in [(4, 512, 4), (8, 256, 4), (8, 512, 4), (8, 512, 8),
-                                    (16, 256, 4), (16, 512, 8), (32, 256, 8)]]
+                                    (16, 256, 4), (16, 512, 8), (32, 256, 8),
+                                    (4, 1024, 8), (8, 1024, 8), (8, 1024, 16),
+                                    (16, 512, 16), (16, 1024, 16), (32, 512, 16)]]
 
 
 # the type constexprs must be in the autotune key: the same (N, K) shape is
