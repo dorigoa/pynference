@@ -1,0 +1,48 @@
+== start 00:20:56
+== pytest gpu exit 1 (00:24:45)
+    return g / (1.0 + np.exp(-alpha * g)) * (u + 1.0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/gpu/test_gptoss_attn0.py::test_gptoss_attn0_layer0 - AssertionEr...
+1 failed, 107 passed, 1 skipped, 1 warning in 226.36s (0:03:46)
+FAILED tests/gpu/test_gptoss_attn0.py::test_gptoss_attn0_layer0 - AssertionEr...
+== ours exit 1 (00:24:49)
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-11-17_00:24:49
+  host      : ubuntu
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 2285743) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+== diff strict exit 1 (00:24:49)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/bench/compare_probs.py", line 196, in <module>
+    main()
+    ~~~~^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 192, in main
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S17-1/ours.json'
+== ppl exit 1 (00:24:52)
+  exitcode  : 1 (pid: 2285938) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+PPL_EXTRACT_FAIL
+== ppl compare exit 3 (00:24:52)
+== something failed: layer dump for step 4 (00:24:52)
+dump: 49780 lines in results/jobs/S17-1/dump.txt
+== dump exit 0 (00:25:34)
+common_debug_cb_eval:               attn_out-0 = (f32)        ADD(node_29{2880, 5, 1, 1}, blk.0.attn_output.bias{2880, 1, 1, 1}}) = {2880, 5, 1, 1}
+common_debug_cb_eval:              attn_norm-1 = (f32)        MUL(norm-1{2880, 5, 1, 1}, blk.1.attn_norm.weight{2880, 1, 1, 1}}) = {2880, 5, 1, 1}
+MISSING_HEADER ffn_out-0
+MISSING_HEADER ffn_out-1
+== summary: pytest=1 ours=1 diff=1 ppl=1 pplcmp=3
+== end 00:25:34
