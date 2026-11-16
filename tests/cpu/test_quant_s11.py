@@ -1,9 +1,9 @@
-"""S11: MXFP4 and IQ4_XS block layouts checked against numpy decodes.
+"""S11: MXFP4, IQ4_XS and Q2_0 block layouts checked against numpy decodes.
 
 Same pattern as test_quant_kquant.py (S10 lesson): gguf-py is the GPU-kernel
-reference, so a second decode written straight from `dequantize_row_mxfp4`
-and `dequantize_row_iq4_xs` in ggml-quants.c pins the byte/bit layout down
-against it.
+reference, so a second decode written straight from `dequantize_row_mxfp4`,
+`dequantize_row_iq4_xs` and `dequantize_row_q2_0` in ggml-quants.c pins the
+byte/bit layout down against it.
 """
 import numpy as np
 import pytest
@@ -55,7 +55,16 @@ def hand_iq4_xs(raw, n, k):
     return (d * (ls - 32) * KVALUES_IQ4NL[nib]).reshape(n, k).astype(np.float32)
 
 
-HAND = {"MXFP4": hand_mxfp4, "IQ4_XS": hand_iq4_xs}
+def hand_q2_0(raw, n, k):
+    """x = (q-1)*d, 2-bit values 4 per byte (dequantize_row_q2_0)."""
+    blk = raw.reshape(n, -1, TYPES["Q2_0"].block_bytes)
+    e = np.arange(64)
+    q = (blk[..., 2 + (e >> 2)] >> ((e % 4) * 2)) & 3
+    d = _fp16(blk, 0)[..., None]
+    return ((q.astype(np.int32) - 1) * d).reshape(n, k).astype(np.float32)
+
+
+HAND = {"MXFP4": hand_mxfp4, "IQ4_XS": hand_iq4_xs, "Q2_0": hand_q2_0}
 
 
 @pytest.mark.parametrize("qtype", list(HAND))

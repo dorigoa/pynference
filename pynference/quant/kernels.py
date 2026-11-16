@@ -38,6 +38,9 @@ _LAYOUT = {
     # (kvalues_fp4, doubled). BB=17 is odd, so the fp16 word view is not
     # usable: the scale is loaded as a byte and turned into 2**(e-128).
     "MXFP4":  dict(BB=17, WPB=8,  QS=1, MS=None, QHB=None),
+    # Q2_0 (S11): d fp16 + 16 bytes of 2-bit values, 64 elements per block
+    # (BS=64: the kernel must not walk blocks in 32-element steps)
+    "Q2_0":   dict(BB=18, WPB=9,  QS=2, MS=None, QHB=None, BS=64),
     "Q2_K":   dict(BB=84,  WPB=42,  QS=16, MS=None, QHB=None,
                    BS=256, DW=40,  DMW=41, SCL=0,   HMB=None),
     "Q3_K":   dict(BB=110, WPB=55,  QS=32, MS=None, QHB=None,
@@ -183,6 +186,10 @@ def _decode(RAW8, RAWI, W16, off8, b, e, RB16,
     if Q8_0:
         q = tl.load(RAWI + off8 + b * BB + QS + e).to(tl.float32)
         return q * d
+    if Q2_0:  # 2-bit values, 4 per byte: 00=-1, 01=0, 10=+1, 11=+2 times d
+        qb = tl.load(RAW8 + off8 + b * BB + QS + (e >> 2)).to(tl.int32)
+        q = (qb >> ((e & 3) * 2)) & 3
+        return (q - 1).to(tl.float32) * d
     byte = tl.load(RAW8 + off8 + b * BB + QS + (e % 16)).to(tl.int32)
     nib = (byte >> tl.where(e >= 16, 4, 0)) & 0x0F
     if HAS_QH:
