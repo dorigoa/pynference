@@ -385,12 +385,14 @@ class GPTOss:
     # residency plan, fewer resident experts, more pinned RAM (C5-checked).
     EXPERT_BUDGET_MIN_GB = 8.0
 
-    # Driver-capacity cap (S17, jobs S17-2/S17-3): plan D8 is an idle-GPU
-    # capacity (S1); a 1 GiB-chunk probe fits 31 GiB, but with hundreds of
-    # 264 MB store buffers alive the rank dies at ~25.5 GiB held by torch
-    # (OutOfMemoryError in S17-2, SIGKILL in S17-3). So cap the store at
-    # device total minus a measured overhead, not at what D8 hopes for.
-    EXPERT_GPU_OVERHEAD_BYTES = 7 << 30
+    # Driver-capacity cap (S17, jobs S17-2..4): plan D8 is an idle-GPU
+    # capacity (S1); a single-process probe fits 31.5 GiB even with the real
+    # buffer pattern (S17-4 probe2), but with dense weights, CCL and two
+    # ranks torch runs out of device memory at a ~24.3 GB store (S17-4 ppl,
+    # S17-2) and ranks died at ~25.5 GiB held (S17-3 SIGKILL). So cap the
+    # store at device total minus a measured overhead, not at what D8 hopes
+    # for; 11 GiB leaves the store ~20 GB, ~2 GiB below the death zone.
+    EXPERT_GPU_OVERHEAD_BYTES = 11 << 30
 
     def _expert_budget(self, dense: int, kv: int, scratch: int) -> int:
         """Store budget: min of the D8 plan budget and (device total -
@@ -601,7 +603,7 @@ class GPTOss:
     def memory_report(self) -> dict:
         """Bytes on this GPU (C3): dense weights (incl. router/biases and the rope
         table), resident + swap experts, KV cache, scratch allowance; plus the
-        pinned host bytes of the non-resident experts."""
+        pinned host bytes held so far (HostPool pins rows on demand, S17)."""
         return {"weights": self._weights_bytes,
                 "experts": self.store.memory_bytes(),
                 "cache": self.kv_bytes(),

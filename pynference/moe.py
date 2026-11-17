@@ -164,25 +164,57 @@ def _pin(t: torch.Tensor) -> torch.Tensor:
 
 
 class HostPool:
-    """One pinned [rows, slot_bytes] block holding given experts of a group."""
+    """One pinned [rows, slot_bytes] block holding given experts of a group.
 
-    def __init__(self, group: ExpertGroup, ids: list[int], pin: bool = True):
+    `lazy=True` defers the pinned allocation to the first expert the store
+    actually swaps in and loads rows one at a time (S17, job S17-4: eager
+    pools cost ~7 GB per rank of non-reclaimable pinned RAM already at load
+    time — on a 62 GB host that is what fed the kernel's global OOM killer
+    during the gpt-oss load; a lazy pool only pins what inference touches).
+    """
+
+    def __init__(self, group: ExpertGroup, ids: list[int], pin: bool = True,
+                 lazy: bool = False):
         self.group = group
         self.ids = list(ids)
         self.row = {e: i for i, e in enumerate(self.ids)}
-        t = torch.empty(len(self.ids) * group.slot_bytes, dtype=torch.uint8)
-        self.buf = _pin(t) if pin else t
+        self._pin = pin
+        self.buf = None if lazy else self._new_buf()
+
+    def _new_buf(self) -> torch.Tensor:
+        # zeros, not empty: lazy rows stay visibly unloaded until row_bytes()
+        # touches them (and the memset runs host-side only on first miss)
+        t = torch.zeros(len(self.ids) * self.group.slot_bytes, dtype=torch.uint8)
+        return _pin(t) if self._pin else t
 
     @property
     def nbytes(self) -> int:
-        return self.buf.numel()
+        """Planned pinned bytes: worst case, every held expert pinned."""
+        return len(self.ids) * self.group.slot_bytes
+
+    @property
+    def allocated_bytes(self) -> int:
+        """Pinned bytes allocated so far (0 while a lazy pool is untouched)."""
+        return 0 if self.buf is None else self.buf.numel()
+
+    def _ensure(self) -> None:
+        if self.buf is None:
+            self.buf = self._new_buf()
 
     def fill(self) -> None:
         """Load every held expert from the source into its pinned row."""
+        self._ensure()
         if self.ids:
             data = np.stack([self.group.expert_bytes(e) for e in self.ids])
             self.buf.view(len(self.ids), self.group.slot_bytes).copy_(
                 torch.from_numpy(data))
+
+    def row_bytes(self, e: int) -> torch.Tensor:
+        """Host row of expert e, allocated and loaded on demand (lazy pools)."""
+        self._ensure()
+        row = self.buf.view(-1, self.group.slot_bytes)[self.row[e]]
+        row.copy_(torch.from_numpy(self.group.expert_bytes(e)))
+        return row
 
 
 # ------------------------------------------------------------- routing / activation
@@ -273,7 +305,8 @@ class ExpertStore:
     shared across a layer's projections (triples move together), so
     `resolve(layer, ids)` yields one int32 tensor that `gemv_indexed` (C2)
     can feed to every projection of the layer. Non-resident local experts
-    live in pinned host memory (`HostPool`). `resolve` copies misses in on
+    live in pinned host memory (`HostPool`), pinned row by row on the first
+    swap that needs them (S17). `resolve` copies misses in on
     a side stream and makes the current stream wait on the copy event, so
     kernels launched after it see fresh bytes; `stats()` reports hits,
     misses and copied bytes.
@@ -333,8 +366,7 @@ class ExpertStore:
                     rows = np.stack([gr.expert_bytes(e) for e in resident])
                     buf[:R[i]].copy_(torch.from_numpy(rows).view(R[i], gr.n, rb))
                 bufs[name] = buf
-                pool = HostPool(gr, rest)
-                pool.fill()
+                pool = HostPool(gr, rest, lazy=True)
                 pinned += pool.nbytes
                 self.pools[layer, name] = pool
             self.bufs[layer] = bufs
@@ -369,8 +401,7 @@ class ExpertStore:
         with torch.xpu.stream(self._side):
             for e, slot in misses:
                 for name, buf in self.bufs[layer].items():
-                    pool = self.pools[layer, name]
-                    src = pool.buf.view(-1, pool.group.slot_bytes)[pool.row[e]]
+                    src = self.pools[layer, name].row_bytes(e)
                     buf[slot].reshape(-1).copy_(src, non_blocking=True)
             self._ev.record(self._side)
         cur.wait_event(self._ev)
@@ -387,6 +418,11 @@ class ExpertStore:
         return sum(b.numel() for lay in self.bufs.values() for b in lay.values())
 
     def pinned_bytes(self) -> int:
+        """Pinned host bytes allocated so far (lazy pools pin on first use)."""
+        return sum(p.allocated_bytes for p in self.pools.values())
+
+    def pinned_planned_bytes(self) -> int:
+        """Worst-case pinned bytes: every held expert pinned (C5 check)."""
         return self._pinned
 
 

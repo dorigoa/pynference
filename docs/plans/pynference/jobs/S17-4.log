@@ -1,0 +1,72 @@
+== start 09:52:05
+== probe exit 0 (09:52:16)
+probe GPU 0: Intel(R) Arc(TM) Pro B70 Graphics total 31.89 GiB, mem_get_info free 30.77 total 31.89 GiB
+probe GPU 0: 1 GiB chunks -> allocati 31 GiB prima di OOM
+probe GPU 0: dense+264MB pattern -> 122 buffer, 31.50 GiB tenuti prima di OOM
+probe GPU 1: Intel(R) Arc(TM) Pro B70 Graphics total 31.89 GiB, mem_get_info free 31.85 total 31.89 GiB
+probe GPU 1: 1 GiB chunks -> allocati 31 GiB prima di OOM
+probe GPU 1: dense+264MB pattern -> 122 buffer, 31.50 GiB tenuti prima di OOM
+== pytest gpu exit 0 (09:54:57)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+108 passed, 1 skipped, 1 warning in 160.27s (0:02:40)
+== ours exit 1 (09:59:36)
+  MoE: 128 experts x 36 layers, budget 24.29 GB (dense 1.34, kv 0.02, scratch 1.07)
+[0]:
+  time      : 2026-11-17_09:59:33
+  host      : ubuntu
+  rank      : 1 (local_rank: 1)
+  exitcode  : -9 (pid: 2753571)  (SIGKILL)
+  error_file: <N/A>
+  traceback : Signal 9 (SIGKILL) received by PID 2753571
+=========================================================
+-- kernel oom lines:
+Nov 17 09:59:33 ubuntu kernel:  oom_kill_process.cold+0xb/0xb4
+Nov 17 09:59:33 ubuntu kernel:  __alloc_pages_may_oom+0x10a/0x1e0
+Nov 17 09:59:33 ubuntu kernel: [  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name
+Nov 17 09:59:33 ubuntu kernel: [    713]   986   713     2590        4        0        4         0    65536      168          -900 systemd-oomd
+Nov 17 09:59:33 ubuntu kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=pmproxy.service,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/app.slice/evolution-calendar-factory.service,task=evolution-calen,pid=2719820,uid=1000
+Nov 17 09:59:33 ubuntu kernel: Out of memory: Killed process 2719820 (evolution-calen) total-vm:897616kB, anon-rss:0kB, file-rss:12kB, shmem-rss:0kB, UID:1000 pgtables:256kB oom_score_adj:100
+Nov 17 09:59:33 ubuntu kernel: pipewire invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=100
+Nov 17 09:59:33 ubuntu kernel:  oom_kill_process.cold+0xb/0xb4
+Nov 17 09:59:33 ubuntu kernel:  __alloc_pages_may_oom+0x10a/0x1e0
+Nov 17 09:59:33 ubuntu kernel: [  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name
+Nov 17 09:59:33 ubuntu kernel: [    713]   986   713     2590        4        0        4         0    65536      168          -900 systemd-oomd
+Nov 17 09:59:33 ubuntu kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=user.slice,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/app.slice/app-dbus\x2d:1.1\x2dorg.gnome.OnlineAccounts.slice/dbus-:1.1-org.gnome.OnlineAccounts@5.service,task=goa-daemon,pid=2719816,uid=1000
+Nov 17 09:59:33 ubuntu kernel: Out of memory: Killed process 2719816 (goa-daemon) total-vm:460328kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:232kB oom_score_adj:100
+Nov 17 09:59:33 ubuntu kernel: systemd invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=-500
+Nov 17 09:59:33 ubuntu kernel:  oom_kill_process.cold+0xb/0xb4
+Nov 17 09:59:33 ubuntu kernel:  __alloc_pages_may_oom+0x10a/0x1e0
+Nov 17 09:59:33 ubuntu kernel: [  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name
+Nov 17 09:59:33 ubuntu kernel: [    713]   986   713     2590        4        0        4         0    65536      168          -900 systemd-oomd
+Nov 17 09:59:33 ubuntu kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=user.slice,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/session.slice/pipewire.service,task=pipewire,pid=2719688,uid=1000
+Nov 17 09:59:33 ubuntu kernel: Out of memory: Killed process 2719688 (pipewire) total-vm:105684kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:96kB oom_score_adj:100
+Nov 17 09:59:33 ubuntu kernel: Out of memory: Killed process 2719690 (pipewire-pulse) total-vm:109116kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:112kB oom_score_adj:100
+Nov 17 09:59:33 ubuntu kernel: Out of memory: Killed process 2719841 (goa-identity-se) total-vm:391964kB, anon-rss:0kB, file-rss:12kB, shmem-rss:0kB, UID:1000 pgtables:132kB oom_score_adj:100
+Nov 17 09:59:33 ubuntu kernel: Out of memory: Killed process 2740863 (at-spi2-registr) total-vm:168996kB, anon-rss:0kB, file-rss:12kB, shmem-rss:0kB, UID:1000 pgtables:96kB oom_score_adj:100
+Nov 17 09:59:33 ubuntu kernel: Out of memory: Killed process 2719837 (user-session-he) total-vm:303932kB, anon-rss:0kB, file-rss:12kB, shmem-rss:0kB, UID:1000 pgtables:92kB oom_score_adj:100
+Nov 17 09:59:33 ubuntu kernel: Out of memory: Killed process 2753571 (python) total-vm:73014488kB, anon-rss:0kB, file-rss:12kB, shmem-rss:0kB, UID:1000 pgtables:101536kB oom_score_adj:0
+JOURNAL_UNAVAILABLE
+== diff strict exit 1 (09:59:37)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/results/jobs/S17-4/run_bench.py", line 12, in <module>
+    mod.main()
+    ~~~~~~~~^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 192, in main
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S17-4/ours.json'
+== ppl exit 1 (10:01:42)
+  MoE: 128 experts x 36 layers, budget 24.30 GB (dense 1.34, kv 0.01, scratch 1.07)
+  MoE: store OOM at 24.30 GB, retry 21.87 GB
+  exitcode  : -9 (pid: 2758309)  (SIGKILL)
+  error_file: <N/A>
+  traceback : Signal 9 (SIGKILL) received by PID 2758309
+=========================================================
+PPL_EXTRACT_FAIL
+== ppl compare exit 3 (10:01:42)
+== summary: probe=0 pytest=0 ours=1 diff=1 ppl=1 pplcmp=3
+== end 10:01:42

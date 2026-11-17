@@ -135,6 +135,21 @@ def test_zero_budget_batches_misses_and_matches_full(tp):
     assert _rel(y0, _reference(_swiglu_np)) < REL_TOL
 
 
+def test_swap_pools_pin_rows_on_demand(tp):
+    # S17 (job S17-4): eager HostPool pinned ~7 GB per rank at load time and
+    # on the 62 GB host the kernel's global OOM killer took the model load
+    # down. The store must pin nothing while building; pools pin on the
+    # first swap miss (test_zero_budget... proves the rows still match).
+    st, m = _moe(tp, 0, swap=2)  # budget 0: every local expert comes via HostPool
+    assert st.pinned_bytes() == 0
+    assert st.pinned_planned_bytes() == NE * _triple_bytes()
+    dev = tp.device
+    for t in range(T):
+        m.decode(torch.from_numpy(TOKENS[t]).to(dev))
+    assert st.stats()["misses"] > 0
+    assert 0 < st.pinned_bytes() <= st.pinned_planned_bytes()
+
+
 def test_prefill_matches_decode_and_reference(tp):
     _, m = _moe(tp, NE * _triple_bytes())
     p = m.prefill(torch.from_numpy(TOKENS).to(tp.device))

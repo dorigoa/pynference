@@ -133,6 +133,23 @@ def test_host_pool_rows_and_pin_state():
     assert pool.buf.is_pinned() == (torch.xpu.device_count() > 0)
 
 
+def test_host_pool_lazy_pins_rows_on_demand():
+    # S17 (job S17-4): the store must not pin the whole swap pool at load
+    # time; a lazy pool allocates only on the first expert a miss needs.
+    g = _group(n_experts=6)
+    pool = HostPool(g, [1, 3, 5], lazy=True)
+    assert pool.buf is None and pool.allocated_bytes == 0
+    assert pool.nbytes == 3 * g.slot_bytes          # planned, for the C5 check
+    row3 = pool.row_bytes(3)
+    view = pool.buf.view(3, g.slot_bytes)
+    assert pool.allocated_bytes == pool.nbytes      # one alloc for the pool
+    assert row3.numpy().tolist() == list(g.raw_fn(3))
+    assert view[0].tolist() == [0] * g.slot_bytes   # expert 1 not asked, not loaded
+    assert pool.row_bytes(1).numpy().tolist() == list(g.raw_fn(1))
+    # eager default unchanged: buffer exists right away
+    assert HostPool(g, [1, 3, 5]).buf is not None
+
+
 def test_host_pool_accepts_2d_raw_fn():
     # quant.testing.make_test_blocks returns [n, row_bytes]; expert_bytes
     # flattens it, so fill keeps the pool view 2D (S15-1 crashed on GPU).
