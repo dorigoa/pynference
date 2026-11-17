@@ -9,6 +9,7 @@ import math
 import pytest
 import torch
 
+from pynference.models import gptoss
 from pynference.models.gptoss import (GPTOss, GPTOSSConfig, _Layer, attn_prefill,
                                       parse_meminfo, rope_yarn_table)
 
@@ -246,6 +247,7 @@ def test_expert_budget_capped_by_device_total(monkeypatch):
     GiB -> cap the store at total - EXPERT_GPU_OVERHEAD_BYTES - the rest."""
     total = 34_236_000_000                     # 31.89 GiB, the real B70
     monkeypatch.setattr(torch.xpu, "device_count", lambda: 1)
+    monkeypatch.setattr(gptoss, "read_mem_total_bytes", lambda: -1)
     monkeypatch.setattr(torch.xpu, "empty_cache", lambda: None)
     monkeypatch.setattr(torch.xpu, "mem_get_info",
                         lambda dev: (total - 2_000_000_000, total), raising=False)
@@ -259,6 +261,7 @@ def test_expert_budget_plan_when_total_is_smaller_than_overhead_cap(monkeypatch)
     """Plenty of room: the D8 plan budget still wins over the cap."""
     total = 48_000_000_000
     monkeypatch.setattr(torch.xpu, "device_count", lambda: 1)
+    monkeypatch.setattr(gptoss, "read_mem_total_bytes", lambda: -1)
     monkeypatch.setattr(torch.xpu, "empty_cache", lambda: None)
     monkeypatch.setattr(torch.xpu, "mem_get_info", lambda dev: (total, total), raising=False)
     m = _stub(seed=47)
@@ -270,10 +273,40 @@ def test_expert_budget_falls_back_to_d8_without_mem_get_info(monkeypatch):
         raise AttributeError("no mem_get_info")
 
     monkeypatch.setattr(torch.xpu, "device_count", lambda: 1)
+    monkeypatch.setattr(gptoss, "read_mem_total_bytes", lambda: -1)
     monkeypatch.setattr(torch.xpu, "empty_cache", lambda: None)
     monkeypatch.setattr(torch.xpu, "mem_get_info", boom, raising=False)
     m = _stub(seed=53)
     want = int(30.0e9) - GPTOss.EXPERT_GPU_OVERHEAD_BYTES - DENSE - KV - SCRATCH
+    assert m._expert_budget(DENSE, KV, SCRATCH) == want
+
+
+def test_expert_budget_capped_by_host_ram():
+    """Job S17-6: GPUActive ~= the sum of the ranks' torch reservations, so
+    every store byte also costs host RAM: cap the total store across the
+    world at (MemTotal - EXPERT_HOST_RESERVE_BYTES) - dense - kv - scratch."""
+    m = _stub(seed=59)
+    m.tp.world = 2
+    host_total = 60 << 30
+    want = ((host_total - GPTOss.EXPERT_HOST_RESERVE_BYTES) // 2
+            - DENSE - KV - SCRATCH)
+    assert want < PLAN0
+    assert m._expert_budget(DENSE, KV, SCRATCH, host_total=host_total) == want
+
+
+def test_expert_budget_host_cap_when_gpus_visible(monkeypatch):
+    """With GPUs visible the cap reads /proc/meminfo; a huge device total
+    must not override the host cap (the S17-6 machine: 31 GiB VRAM/GPU,
+    ~60 GiB RAM, two ranks)."""
+    monkeypatch.setattr(torch.xpu, "device_count", lambda: 1)
+    monkeypatch.setattr(gptoss, "read_mem_total_bytes", lambda: 50 << 30)
+    monkeypatch.setattr(torch.xpu, "empty_cache", lambda: None)
+    monkeypatch.setattr(torch.xpu, "mem_get_info",
+                        lambda dev: (40_000_000_000, 40_000_000_000), raising=False)
+    m = _stub(seed=61)
+    want = ((50 << 30) - GPTOss.EXPERT_HOST_RESERVE_BYTES) // 1 - DENSE - KV - SCRATCH
+    gpu_cap = 40_000_000_000 - GPTOss.EXPERT_GPU_OVERHEAD_BYTES - DENSE - KV - SCRATCH
+    assert want < PLAN0 and want < gpu_cap
     assert m._expert_budget(DENSE, KV, SCRATCH) == want
 
 

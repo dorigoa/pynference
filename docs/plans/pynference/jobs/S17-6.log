@@ -1,0 +1,46 @@
+== start 11:29:38
+== baseline meminfo (Strata fermo, GPU fredde):
+MemAvailable:   60547952 kB
+GPUActive:          3688 kB
+== pytest store/moe exit 0 (11:29:50)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+13 passed, 1 warning in 11.62s
+prompt raw: 12 tokens, 24 steps in ref
+== ours exit 1 (11:31:04)
+  MoE: 128 experts x 36 layers, budget 20.00 GB (dense 1.34, kv 0.02, scratch 1.07)
+  MoE: 1440 of 2304 local experts resident, 72 swap slots, store 19.99 GB, pinned 0.00 GB
+  gpt-oss: load done in 43.6s
+[0]:
+  time      : 2026-11-17_11:31:00
+  host      : ubuntu
+  rank      : 1 (local_rank: 1)
+  exitcode  : -9 (pid: 2886831)  (SIGKILL)
+  error_file: <N/A>
+  traceback : Signal 9 (SIGKILL) received by PID 2886831
+========================================================
+-- kernel oom lines:
+Nov 17 11:31:00 ubuntu kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=user.slice,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/app.slice/app-dbus\x2d:1.1\x2dorg.gnome.OnlineAccounts.slice/dbus-:1.1-org.gnome.OnlineAccounts@10.service,task=goa-daemon,pid=2813503,uid=1000
+Nov 17 11:31:00 ubuntu kernel: Out of memory: Killed process 2813503 (goa-daemon) total-vm:460328kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:240kB oom_score_adj:100
+Nov 17 11:31:00 ubuntu kernel: xpu-smi invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=0
+Nov 17 11:31:00 ubuntu kernel:  oom_kill_process.cold+0xb/0xb4
+Nov 17 11:31:00 ubuntu kernel:  __alloc_pages_may_oom+0x10a/0x1e0
+Nov 17 11:31:00 ubuntu kernel: [  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name
+Nov 17 11:31:00 ubuntu kernel: [    713]   986   713     2590        4        0        4         0    65536      168          -900 systemd-oomd
+Nov 17 11:31:00 ubuntu kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=telegraf.service,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/session.slice/pipewire.service,task=pipewire,pid=2813353,uid=1000
+Nov 17 11:31:00 ubuntu kernel: Out of memory: Killed process 2813353 (pipewire) total-vm:105620kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:108kB oom_score_adj:100
+Nov 17 11:31:00 ubuntu kernel: Out of memory: Killed process 2813355 (pipewire-pulse) total-vm:109112kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:112kB oom_score_adj:100
+Nov 17 11:31:00 ubuntu kernel: Out of memory: Killed process 2813519 (goa-identity-se) total-vm:391964kB, anon-rss:0kB, file-rss:12kB, shmem-rss:0kB, UID:1000 pgtables:128kB oom_score_adj:100
+Nov 17 11:31:00 ubuntu kernel: Out of memory: Killed process 2813574 (user-session-he) total-vm:303932kB, anon-rss:0kB, file-rss:12kB, shmem-rss:0kB, UID:1000 pgtables:92kB oom_score_adj:100
+Nov 17 11:31:00 ubuntu kernel: oom_reaper: reaped process 2813574 (user-session-he), now anon-rss:0kB, file-rss:0kB, shmem-rss:0kB
+Nov 17 11:31:00 ubuntu kernel: Out of memory: Killed process 2886831 (python) total-vm:76875176kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:82524kB oom_score_adj:0
+Nov 17 11:31:00 ubuntu kernel: Out of memory: Killed process 2886830 (python) total-vm:76629084kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:82260kB oom_score_adj:0
+JOURNAL_UNAVAILABLE
+-- memdiag lines (rank, phase, host avail, driver-held, torch, pinned):
+1794911437.013 rank1 pid2886831 load mem_avail=17.02GiB gpu_active=40.24GiB torch_alloc=19.89GiB torch_resv=20.06GiB store_pinned=0.00GiB
+1794911437.063 rank0 pid2886830 load mem_avail=17.18GiB gpu_active=40.24GiB torch_alloc=19.89GiB torch_resv=20.06GiB store_pinned=0.00GiB
+-- mem.log gpu_active trend:
+meminfo avail_kb 60547672 gpu_active_kb 3688
+meminfo avail_kb 27231500 gpu_active_kb 32994288
+== summary: pytest=0 ours=1 diff=-
+== end 11:31:04

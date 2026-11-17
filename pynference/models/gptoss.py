@@ -247,6 +247,20 @@ def parse_meminfo(text: str) -> tuple[int, int]:
     return avail, gpuact
 
 
+def read_mem_total_bytes() -> int:
+    """MemTotal in bytes from /proc/meminfo, -1 if unavailable (S17 host
+    cap: the driver holds system RAM for the GPU, see
+    GPTOss.EXPERT_HOST_RESERVE_BYTES)."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        return -1
+    return -1
+
+
 class _Layer:
     pass
 
@@ -419,10 +433,31 @@ class GPTOss:
     # for; 11 GiB leaves the store ~20 GB, ~2 GiB below the death zone.
     EXPERT_GPU_OVERHEAD_BYTES = 11 << 30
 
-    def _expert_budget(self, dense: int, kv: int, scratch: int) -> int:
-        """Store budget: min of the D8 plan budget and (device total -
-        EXPERT_GPU_OVERHEAD_BYTES - dense - kv - scratch)."""
+    # Host-RAM cap (S17, job S17-6 diagnosis): the xe driver holds system
+    # RAM for the GPU ~1:1 — memdiag at load end showed GPUActive 40.24 GiB
+    # ~= the two ranks' torch reservations with store_pinned 0, and prefill
+    # added another +12.7 GiB before the kernel's global OOM killer fired on
+    # this ~60 GiB machine. On such a host the host, not the GPU, is the
+    # binding constraint: keep the total store across all ranks inside
+    # MemTotal - EXPERT_HOST_RESERVE_BYTES, the reserve covering driver
+    # anon state, heaps, page tables, prefill/decode transients and margin.
+    # 24 GiB leaves a ~16 GB store per rank here (~55% experts resident).
+    EXPERT_HOST_RESERVE_BYTES = 24 << 30
+
+    def _expert_budget(self, dense: int, kv: int, scratch: int,
+                       host_total: int | None = None) -> int:
+        """Store budget: min of the D8 plan budget, the host-RAM cap
+        ((MemTotal - EXPERT_HOST_RESERVE_BYTES) // world - dense - kv -
+        scratch) and (device total - EXPERT_GPU_OVERHEAD_BYTES - dense - kv
+        - scratch). host_total=None reads /proc/meminfo only when GPUs are
+        visible (CPU tests hide them and stay on the pure plan)."""
         plan = max(int(D8_BUDGET_GB[self.tp.rank] * 1e9) - dense - kv - scratch, 0)
+        if host_total is None and torch.xpu.device_count() > 0:
+            host_total = read_mem_total_bytes()
+        if host_total and host_total > 0:
+            host_cap = max((host_total - self.EXPERT_HOST_RESERVE_BYTES)
+                           // self.tp.world - dense - kv - scratch, 0)
+            plan = min(plan, host_cap)
         if torch.xpu.device_count() == 0:      # CPU tests hide the GPUs
             return plan
         gc.collect()

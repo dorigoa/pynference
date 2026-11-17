@@ -8,8 +8,11 @@ after the layer.
 
 Each (layer, projection) has one resident GPU buffer `[S, N, row_bytes]` of
 raw GGUF bytes (C2 layout, copied from RAM byte for byte) plus a few LRU
-swap slots; non-resident experts live in pinned host memory and are never
-duplicated — weights are read-only, so eviction needs no write-back.
+swap slots; non-resident experts are read straight from the (read-only,
+reclaimable) GGUF at swap time and staged to the GPU through a small pinned
+ring (`ring_slots` slot-sized buffers, S17 job S17-6), so page-locked host
+RAM stays tens of MB per rank instead of the whole swap set — weights are
+read-only, so eviction needs no write-back.
 """
 from __future__ import annotations
 
@@ -171,6 +174,12 @@ class HostPool:
     pools cost ~7 GB per rank of non-reclaimable pinned RAM already at load
     time — on a 62 GB host that is what fed the kernel's global OOM killer
     during the gpt-oss load; a lazy pool only pins what inference touches).
+
+    Since job S17-6 the store itself no longer pins pools at all: swap
+    misses go through `ExpertStore`'s bounded pinned ring, so the driver
+    never holds a whole pool's worth of locked RAM either. Pools remain as
+    the per-group row API (used by eager fills and tests) and for the C5
+    worst-case pinned plan (`pinned_planned_bytes`).
     """
 
     def __init__(self, group: ExpertGroup, ids: list[int], pin: bool = True,
@@ -305,15 +314,19 @@ class ExpertStore:
     shared across a layer's projections (triples move together), so
     `resolve(layer, ids)` yields one int32 tensor that `gemv_indexed` (C2)
     can feed to every projection of the layer. Non-resident local experts
-    live in pinned host memory (`HostPool`), pinned row by row on the first
-    swap that needs them (S17). `resolve` copies misses in on
+    are read from the read-only GGUF at swap time and staged through a small
+    pinned ring of `ring_slots` slot-sized buffers (S17, job S17-6: the xe
+    driver holds system RAM for page-locked and device memory, so pinning
+    whole pools on the first miss fed the host OOM killer just like eager
+    pinning at load did; the ring keeps locked host RAM at `ring_slots *
+    slot_bytes`). `resolve` copies misses in on
     a side stream and makes the current stream wait on the copy event, so
     kernels launched after it see fresh bytes; `stats()` reports hits,
     misses and copied bytes.
     """
 
     def __init__(self, g, tp, budget_bytes: int, swap_slots: int = 2,
-                 verbose: bool = False):
+                 verbose: bool = False, ring_slots: int = 4):
         groups = list(getattr(g, "groups", g))
         if not groups:
             raise ValueError("ExpertStore: no expert groups")
@@ -375,6 +388,15 @@ class ExpertStore:
         self._pinned = pinned
         self._side = torch.xpu.Stream(tp.device)
         self._ev = torch.xpu.Event()
+        # Pinned staging ring (S17, job S17-6): swap misses fill these few
+        # page-locked slot-sized buffers from the GGUF and copy them to the
+        # GPU; a buffer is refilled only after the event of its own H2D copy,
+        # so it never races a queued kernel. Allocated on the first miss.
+        self._ring_slots = max(ring_slots, 1)
+        self._ring_bytes = max(gr.slot_bytes for gr in groups)
+        self._ring = None
+        self._ring_ev = None
+        self._ring_i = 0
         self.hits = self.misses = 0
         self.bytes_copied = 0
 
@@ -394,15 +416,34 @@ class ExpertStore:
             self._copy_misses(layer, misses)
         return torch.tensor(slots, dtype=torch.int32, device=self.tp.device)
 
+    def _ensure_ring(self) -> None:
+        """Allocate the pinned staging ring on the first swap miss (so
+        pinned_bytes() is 0 while the store has only served residents)."""
+        if self._ring is None:
+            self._ring = [
+                _pin(torch.zeros(self._ring_bytes, dtype=torch.uint8))
+                for _ in range(self._ring_slots)]
+            self._ring_ev = [None] * self._ring_slots
+
     def _copy_misses(self, layer: int, misses: list[tuple[int, int]]) -> None:
         cur = torch.xpu.current_stream()
         # the side stream must not overwrite a slot a queued kernel may read
         self._side.wait_stream(cur)
+        self._ensure_ring()
         with torch.xpu.stream(self._side):
             for e, slot in misses:
                 for name, buf in self.bufs[layer].items():
-                    src = self.pools[layer, name].row_bytes(e)
-                    buf[slot].reshape(-1).copy_(src, non_blocking=True)
+                    gr = self.layers[layer][name]
+                    r = self._ring_i
+                    self._ring_i = (r + 1) % self._ring_slots
+                    if self._ring_ev[r] is not None:
+                        # this stage buffer is still feeding an earlier copy
+                        self._ring_ev[r].synchronize()
+                    stage = self._ring[r][:gr.slot_bytes]
+                    stage.copy_(torch.from_numpy(gr.expert_bytes(e)))
+                    buf[slot].reshape(-1).copy_(stage, non_blocking=True)
+                    ev = self._ring_ev[r] = torch.xpu.Event()
+                    ev.record(self._side)
             self._ev.record(self._side)
         cur.wait_event(self._ev)
 
@@ -418,8 +459,11 @@ class ExpertStore:
         return sum(b.numel() for lay in self.bufs.values() for b in lay.values())
 
     def pinned_bytes(self) -> int:
-        """Pinned host bytes allocated so far (lazy pools pin on first use)."""
-        return sum(p.allocated_bytes for p in self.pools.values())
+        """Host bytes page-locked so far: the staging ring (the store's only
+        pinned memory since job S17-6) plus any pool buffer pinned through
+        the pool's own row API."""
+        ring = 0 if self._ring is None else sum(b.numel() for b in self._ring)
+        return ring + sum(p.allocated_bytes for p in self.pools.values())
 
     def pinned_planned_bytes(self) -> int:
         """Worst-case pinned bytes: every held expert pinned (C5 check)."""

@@ -115,19 +115,36 @@ def test_two_layers_budget_spread(tp):
     # swap reserved first (2t), 8t left: expert-major fill stays even, 4+4
     assert st.maps[0].R == 4 and st.maps[0].S == 5
     assert st.maps[1].R == 4 and st.maps[1].S == 5
-    # S17 lazy pools: build pins nothing (eager pinning fed the host OOM
-    # killer in job S17-4); a pool pins its rows on the first swap miss.
+    # S17 ring staging: build pins nothing (eager pools fed the host OOM
+    # killer in S17-4; whole-pool pinning on first miss did too in S17-6).
     assert st.pinned_bytes() == 0
     assert st.pinned_planned_bytes() == 8 * t  # 4 non-residents per layer
     for e in (4, 5, 6, 7):  # swap_slots=1: one fresh miss per resolve
         st.resolve(0, [e])
         st.resolve(1, [e])
-    assert st.pinned_bytes() == 8 * t  # both layers pinned all 4+4 rows
+    ring = st._ring_slots * st._ring_bytes
+    assert st.pinned_bytes() == ring  # just the ring, never the pools
+    assert all(p.allocated_bytes == 0 for p in st.pools.values())
 
 
-def test_pinned_pool_flag(tp):
-    st = _store(tp, budget=0)
+def test_store_pinned_ring_bounded(tp):
+    """Job S17-6: the xe driver holds system RAM for locked host memory, so
+    a store must never pin more than its staging ring, no matter how many
+    distinct experts the decode misses; bytes must stay exact across ring
+    buffer reuse."""
+    st = _store(tp, budget=0)  # swap=2: fresh experts keep evicting
     pool = st.pools[0, "gate"]
-    assert pool.buf is None  # lazy store: nothing pinned at build
-    st.resolve(0, [3])  # first swap miss allocates and pins the pool
-    assert pool.buf is not None and pool.buf.is_pinned()  # inside a GPU job
+    assert st.pinned_bytes() == 0 and pool.buf is None
+    for e in (2, 3, 4, 5):  # 4 experts x 3 projections = 12 stages > ring
+        st.resolve(0, [e])
+    ring = st._ring_slots * st._ring_bytes
+    assert st.pinned_bytes() == ring
+    assert all(b.is_pinned() for b in st._ring)  # inside a GPU job
+    assert pool.buf is None and pool.allocated_bytes == 0  # store never pins
+    # exact bytes for the last expert after ring wraparound:
+    slot = st.maps[0].slot[5]
+    for name in ("gate", "up", "down"):
+        want = torch.from_numpy(st.layers[0][name].expert_bytes(5))
+        got = st.bufs[0][name][slot].reshape(-1)
+        torch.xpu.synchronize()  # the side-stream copies must have landed
+        assert torch.equal(got.cpu(), want)
