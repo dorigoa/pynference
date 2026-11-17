@@ -1,0 +1,78 @@
+== start 19:00:13
+== baseline meminfo (Strata fermo, GPU fredde):
+MemAvailable:   60697936 kB
+GPUActive:          3688 kB
+== probe B: two processes with oneCCL (19:00:13)
+P1 pre-TP                       gpu_active    0.00 GiB reserved   0.00 allocated   0.00
+P0 pre-TP                       gpu_active    0.00 GiB reserved   0.00 allocated   0.00
+P0 post-TP                      gpu_active    0.14 GiB reserved   0.00 allocated   0.00P1 post-TP                      gpu_active    0.14 GiB reserved   0.00 allocated   0.00
+P0 post-sync                    gpu_active    1.15 GiB reserved   0.02 allocated   0.00
+P1 post-sync                    gpu_active    1.15 GiB reserved   0.02 allocated   0.00
+P1 ccl 8x1GiB                   gpu_active   17.15 GiB reserved   8.02 allocated   8.00P0 ccl 8x1GiB                   gpu_active   17.15 GiB reserved   8.02 allocated   8.00
+P0 ccl 8x1GiB freed             gpu_active    3.15 GiB reserved   1.02 allocated   1.00
+P1 ccl 8x1GiB freed             gpu_active    3.15 GiB reserved   1.02 allocated   1.00
+P0 ccl 512x16MiB                gpu_active   17.12 GiB reserved   8.01 allocated   8.00P1 ccl 512x16MiB                gpu_active   17.12 GiB reserved   8.01 allocated   8.00
+P1 ccl 512x16MiB freed          gpu_active    1.18 GiB reserved   0.04 allocated   0.02
+P0 ccl 512x16MiB freed          gpu_active    1.18 GiB reserved   0.04 allocated   0.02
+P1 post-TP.close                gpu_active    1.18 GiB reserved   0.04 allocated   0.00
+P0 post-TP.close                gpu_active    1.18 GiB reserved   0.04 allocated   0.00
+== meminfo after probe B:
+MemAvailable:   60767348 kB
+GPUActive:          3688 kB
+== kernels selftest (19:00:36)
+== kernels selftest exit 0
+rms_norm       0.0
+add_norm       9.5367431640625e-07 1.430511474609375e-06
+norm_rope      4.76837158203125e-07
+norm_rope→kv   0.0018711090087890625
+norm (no rope) 2.384185791015625e-07
+bias_rope T=3 H=4 D=64 5.960464477539063e-08
+bias_rope->kv 0.0018739700317382812
+bias_rope T=1 H=32 D=64 5.960464477539063e-08
+bias_rope->kv 0.0019459724426269531
+swiglu_oai 2x100 9.5367431640625e-07
+swiglu_oai 4x2880 3.814697265625e-06
+gelu_mul       3.814697265625e-06
+attn_decode Hq=16 Hkv=8 D=256 n=1024: 6.56e-07
+attn_decode+sinks Hq=16 Hkv=8 D=256 n=1024: 7.15e-07
+attn_decode Hq=16 Hkv=8 D=256 n=37: 7.15e-07
+attn_decode+sinks Hq=16 Hkv=8 D=256 n=37: 5.96e-07
+attn_decode Hq=16 Hkv=2 D=512 n=3000: 2.15e-06
+attn_decode+sinks Hq=16 Hkv=2 D=512 n=3000: 2.26e-06
+== pytest tests/gpu/test_kernels.py (19:00:44)
+== pytest exit 0
+...............                                                          [100%]
+15 passed in 3.05s
+== decode_profile fused --ctx 8192 --steps 16 --no-profile (19:00:47)
+== fused exit 0 (19:01:58)
+  MoE: 128 experts x 36 layers, budget 17.14 GB (dense 1.34, kv 0.15, scratch 1.07)
+  MoE: 1224 of 2304 local experts resident, 72 swap slots, store 17.13 GB, pinned 0.00 GB
+  gpt-oss: load done in 27.9s
+[fused] wall time per token: 470.4 ms (2.13 tok/s)
+store: hits 1656 misses 1074 copied 13.22 GiB; resident 1224/1296 slots
+== decode_profile graph --ctx 8192 --steps 32 (19:01:58)
+== graph exit 124 (19:42:01)
+  MoE: 128 experts x 36 layers, budget 17.14 GB (dense 1.34, kv 0.15, scratch 1.07)
+  MoE: 1224 of 2304 local experts resident, 72 swap slots, store 17.13 GB, pinned 0.00 GB
+  gpt-oss: load done in 26.8s
+[graph] wall time per token: 218.3 ms (4.58 tok/s)
+store: hits 2635 misses 1382 copied 17.01 GiB; resident 1224/1296 slots
+-- graph top kernels (ms/token):
+-- graph log tail:
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/agent/server/api.py", line 922, in _invoke_run
+    time.sleep(monitor_interval)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/api.py", line 86, in _terminate_process_handler
+    raise SignalException(f"Process {os.getpid()} got signal: {sigval}", sigval=sigval)
+torch.distributed.elastic.multiprocessing.api.SignalException: Process 3398715 got signal: 15
+== compare_probs ours --decode fused (19:42:01)
+== ours fused exit 0 (19:43:40)
+== compare_probs ours --decode graph (19:43:40)
+== ours graph exit 0 (19:45:17)
+== diffs (C8 margins; strict only vs ref):
+ref vs fused  exit 0: C8 strict: PASS
+ref vs graph  exit 0: C8 strict: PASS
+fused vs graph exit 0:    ours: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+-- kernel oom lines (job safety net):
+== summary: selftest=0 kernels_pytest=0 fused=0 graph=124 ours_f=0 ours_g=0 diff=0/0/0
+== end 19:45:18
