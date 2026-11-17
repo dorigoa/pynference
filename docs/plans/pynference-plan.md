@@ -1564,21 +1564,40 @@ prefill e decode, confrontata con i dump.
 **Obiettivo.** Flash-Next completo, con esperti in `ExpertStore` (tipi misti),
 PLE in RAM, che rispetta C8.
 
-**Requisiti.** Job GPU: 2–3.
+**Requisiti.** Job GPU: 3–4.
 
-**Leggi.** `reports/S23-map-a.md`, `S23-map-c.md`; 3.10; C5, C8.
+**Leggi.** `reports/S23-map-a.md`, `S23-map-c.md`; 3.10; C5, C8; in
+`reports/S18.md` il passo 1 e le sonde dei job S18-1 e S18-2.
 
 **Puoi modificare.** `pynference/models/qwen4exp.py`,
-`pynference/models/__init__.py`, `pynference/moe.py`, `scripts/regress.sh`,
-`tests/**`, `tests/golden/qwen4exp/**`.
+`pynference/models/__init__.py`, `pynference/moe.py`,
+`pynference/models/gptoss.py` (solo il budget degli esperti, passo 1),
+`scripts/regress.sh`, `tests/**`, `tests/golden/qwen4exp/**`.
 
 **Passi.**
 
-1. MoE: 512 esperti, top-10, esperto condiviso con gate; piano di memoria
-   (budget degli esperti residenti) nel report.
-2. Modello completo (DeltaNet di S20, attention normale e compressa, HC, PLE).
-3. Job **S26-1**: `compare_probs.py --ref`, `diff --strict`, `bench/ppl.py`.
-4. Correzioni fino a C8; `regress.sh qwen4exp` con baseline; chat con
+1. RAM bloccata dal driver, prima del piano di memoria (job **S26-1**). Ogni
+   allocazione torch su XPU blocca RAM dell'host quasi pari ai byte
+   riservati (`GPUActive` in `/proc/meminfo`; S17-6 e sonde di S18-1 e
+   S18-2, con e senza oneCCL, blocchi grandi e piccoli). Strata, motore SYCL
+   senza torch, tiene invece ~60 GiB di VRAM con 7,2 GiB di `GPUActive`
+   (misura del 2026-11-17): il limite è nel percorso di torch (allocatore o
+   runtime SYCL del suo pacchetto), non nel driver. Flash-Next pesa 88 GB:
+   con lo specchio 1:1 non entra fra 64 GB di VRAM e 62 GB di RAM; su
+   GPT-OSS lo specchio tiene gli esperti residenti al ~54%. Trova un modo di
+   allocare i buffer di `ExpertStore` che non blocchi RAM, misurando
+   `GPUActive` a ogni prova, e applicalo allo store. Su GPT-OSS alza il
+   budget degli esperti (`EXPERT_HOST_RESERVE_BYTES` in `gptoss.py`) e
+   verifica `regress.sh gpt-oss-120b` e la velocità
+   (`decode_profile.py --mode graph --no-profile`; in S18 4,2–4,6 token/s).
+   Sul PC non c'è un compilatore SYCL di sistema e i download sono solo
+   quelli della D2: se serve un modulo nativo o un pacchetto nuovo, fermati
+   (2.6).
+2. MoE: 512 esperti, top-10, esperto condiviso con gate; piano di memoria
+   (budget degli esperti residenti) nel report, con l'esito del passo 1.
+3. Modello completo (DeltaNet di S20, attention normale e compressa, HC, PLE).
+4. Job **S26-2**: `compare_probs.py --ref`, `diff --strict`, `bench/ppl.py`.
+5. Correzioni fino a C8; `regress.sh qwen4exp` con baseline; chat con
    ragionamento; `regress.sh gemma4`.
 
 **Fatto quando.** C8 rispettato; regressioni verdi.
