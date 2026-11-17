@@ -256,7 +256,18 @@ parse_section() {
 }
 
 status_of() { sed -n 's/^- Stato:[[:space:]]*//p' "$REPORTS/S$1.md" 2>/dev/null | head -n 1; }
-job_of()    { status_of "$1" | sed -n 's/.*job \([A-Za-z0-9_.-]*\).*/\1/p'; }
+# Il job chiesto: il PRIMO "job SN-K" (N = la sezione) nel paragrafo dello Stato,
+# cioè la riga "- Stato:" più le righe rientrate che la continuano. Il primo e
+# non l'ultimo: dopo la richiesta l'agente cita spesso anche il job precedente
+# ("In attesa GPU (job S17-8) — job S17-7: …"); prendendo l'ultimo lo script
+# trovava un job già eseguito, non apriva la finestra e riprendeva l'agente a
+# vuoto fino al limite di MAX_STALLS.
+job_of() {
+  awk '/^- Stato:/ { on = 1; print; next }
+       on && /^[[:space:]]+[^[:space:]]/ { print; next }
+       on { exit }' "$REPORTS/S$1.md" 2>/dev/null \
+    | tr -s '[:space:]' ' ' | grep -o -E "job S$1-[0-9]+" | head -n 1 | cut -d' ' -f2
+}
 clean()     { [ -z "$(git status --porcelain)" ]; }
 
 auto_rules() {
@@ -588,7 +599,12 @@ for n in $(seq "$start" "$end"); do
           stop "S$n: $st. Leggi $REPORTS/S$n.md e la 1.6, poi rilancia da S$n"
         fi ;;
       "In attesa GPU"*)
-        say "S$n: l'agente chiede il job $(job_of "$n")"
+        job=$(job_of "$n")
+        if [ -n "$job" ] && [ -f "$JOBS/$job.exit" ]; then
+          say "S$n: il report chiede il job $job, che però è già stato eseguito (c'è $JOBS/$job.exit): l'agente deve leggerne i risultati o chiedere un job nuovo"
+        else
+          say "S$n: l'agente chiede il job ${job:-(nessun nome SN-K nello Stato)}"
+        fi
         mode=resume
         [ "$stalls" -lt "$MAX_STALLS" ] || break
         [ "$attempt" -lt "$MAX_ATTEMPTS" ] || break
