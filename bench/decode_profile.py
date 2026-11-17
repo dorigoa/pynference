@@ -26,6 +26,8 @@ def main():
                     help="max_ctx for the model (C9 measures with --ctx 8192)")
     ap.add_argument("--mode", choices=["torch", "fused", "graph"], default="fused",
                     help="decode path: plain torch ops, fused Triton kernels, or fused + XPUGraph")
+    ap.add_argument("--prompt-tokens", type=int, default=0,
+                    help="grow the prompt to about this many tokens (C9 also measures at ~2000)")
     ap.add_argument("--no-profile", action="store_true")
     args = ap.parse_args()
     tp = TP()
@@ -35,24 +37,32 @@ def main():
     model.fast_decode = args.mode != "torch"
     model.use_graph = args.mode == "graph"
     ids = tok.encode("The quick brown fox jumps over the lazy dog. " * 4)
+    if args.prompt_tokens > len(ids):   # C9: decode is also measured after a ~2000-token prompt
+        while len(ids) < args.prompt_tokens:
+            ids += tok.encode("The quick brown fox jumps over the lazy dog. ")
+        ids = ids[:args.prompt_tokens]
     dev = tp.device
 
     def run(n):
         model.reset()
-        logits = model.forward(ids)
-        nxt = int(logits.argmax())
         torch.xpu.synchronize(dev)
+        t = time.perf_counter()
+        logits = model.forward(ids)
+        torch.xpu.synchronize(dev)
+        pre = (time.perf_counter() - t) / len(ids)
+        nxt = int(logits.argmax())
         t = time.perf_counter()
         for _ in range(n):
             logits = model.forward([nxt])
             nxt = int(logits.argmax())
         torch.xpu.synchronize(dev)
-        return (time.perf_counter() - t) / n
+        return pre, (time.perf_counter() - t) / n
 
     run(4)                       # compile / autotune / capture
-    wall = run(args.steps)
+    pre, wall = run(args.steps)
     if tp.is_main:
-        print(f"\n[{args.mode}] wall time per token: {wall * 1e3:.1f} ms ({1 / wall:.2f} tok/s)", flush=True)
+        print(f"\n[{args.mode}] prefill {len(ids)} tokens: {pre * 1e3:.3f} ms/token ({1 / pre:.0f} token/s)", flush=True)
+        print(f"[{args.mode}] wall time per token: {wall * 1e3:.1f} ms ({1 / wall:.2f} tok/s)", flush=True)
     store = getattr(model, "store", None)   # MoE models only (C5): hit rate drives decode speed
     if store is not None:
         st = store.stats()
