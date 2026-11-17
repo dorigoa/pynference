@@ -1,0 +1,88 @@
+== start 14:00:30
+== pytest gpu exit 0 (14:03:13)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+109 passed, 1 skipped, 1 warning in 162.00s (0:02:42)
+== ours exit 0 (14:04:53)
+  MoE: 1234 of 2304 local experts resident, 72 swap slots, store 17.26 GB, pinned 0.00 GB
+  gpt-oss: load done in 31.1s
+/home/alvise/pynference/pynference/moe.py:443: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:208.)
+  stage.copy_(torch.from_numpy(gr.expert_bytes(e)))
+/home/alvise/pynference/pynference/moe.py:443: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:208.)
+  stage.copy_(torch.from_numpy(gr.expert_bytes(e)))
+chat-it: 'analysisThe user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in una '
+chat-en: 'analysisThe user asks: "Write a haiku about the sea." Simple. Provide a haiku (5'
+code: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, '
+raw: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years,'
+== diff strict exit 1 (14:04:53)
+chat-it  same greedy tokens 24/24, max |dp| top-10 0.0336, mean partial KL 2.69e-04
+   ref:  '<|channel|>analysis<|message|>The user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in un'
+   ours: 'analysisThe user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase'
+chat-en  same greedy tokens 3/24, max |dp| top-10 0.0873, mean partial KL 6.71e-03
+   ref:  '<|channel|>analysis<|message|>We need to write a haiku about the sea. Haiku is 5-7-5 syll'
+   ours: 'analysisThe user asks: "Write a haiku about the sea." Simple. Provide a haiku (5'
+code     same greedy tokens 24/24, max |dp| top-10 0.0238, mean partial KL 4.22e-04
+   ref:  '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+   ours: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+raw      same greedy tokens 16/24, max |dp| top-10 0.0185, mean partial KL 4.73e-03
+   ref:  ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+   ours: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, and during this tim'
+C8 FAIL: greedy-identical prompts: 2/4, 3 required
+C8 strict: FAIL
+== ppl exit 0 (14:07:29)
+/home/alvise/pynference/pynference/moe.py:443: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:208.)
+  stage.copy_(torch.from_numpy(gr.expert_bytes(e)))
+[1]1.9336,[2]1.4534,[3]1.4536,[4]2.1071,[5]1.9316,[6]1.7471,[7]1.6271,[8]1.6127,
+Final estimate: PPL = 1.6127 +/- 0.04060  (2040 scored tokens, 115.6s)
+RES ppl ours 1.6127 ref 1.5995 rel 0.825% (limit 1%)
+== ppl compare exit 0 (14:07:29)
+== baseline ours copied into tests/golden/gpt-oss-120b (14:07:29)
+== baseline ppl copied into tests/golden/gpt-oss-120b (14:07:29)
+== regress gpt-oss exit 1 (14:11:41)
+ppl: baseline 1.6127, now 1.6127, rel diff 0.000%
+FAIL: chat-it: top-10 ids differ at step 0
+FAIL: chat-en: top-10 ids differ at step 0
+FAIL: code: top-10 ids differ at step 2
+FAIL: code: max |dp| 3.21e-03 > 1e-3
+FAIL: raw: top-10 ids differ at step 10
+FAIL: raw: max |dp| 8.69e-03 > 1e-3
+FAIL
+== chat exit 0 (14:13:15)
+[stats] prompt new 83/83 tok, 63 tok in 23.46s = 2.7 tok/s
+[stats] prompt new 168/168 tok, 49 tok in 15.31s = 3.2 tok/s
+  store: layer 33 down: 34 resident + 2 swap slots -> 159 MB
+  store: layer 33 down: 34 resident + 2 swap slots -> 159 MB
+  store: layer 34 gate: 34 resident + 2 swap slots -> 159 MB
+  store: layer 34 gate: 34 resident + 2 swap slots -> 159 MB
+  store: layer 34 up: 34 resident + 2 swap slots -> 159 MB
+  store: layer 34 up: 34 resident + 2 swap slots -> 159 MB
+  store: layer 34 down: 34 resident + 2 swap slots -> 159 MB
+  store: layer 34 down: 34 resident + 2 swap slots -> 159 MB
+  store: layer 35 gate: 34 resident + 2 swap slots -> 159 MB
+  store: layer 35 gate: 34 resident + 2 swap slots -> 159 MB
+  store: layer 35 up: 34 resident + 2 swap slots -> 159 MB
+  store: layer 35 up: 34 resident + 2 swap slots -> 159 MB
+  store: layer 35 down: 34 resident + 2 swap slots -> 159 MB
+  store: layer 35 down: 34 resident + 2 swap slots -> 159 MB
+  MoE: 1230 of 2304 local experts resident, 72 swap slots, store 17.21 GB, pinned 0.00 GB
+  gpt-oss: load done in 26.8s
+2026:11:17-14:12:13:3100671 |CCL_WARN| did not find MPI-launcher specific variables, switch to ATL/OFI, to force enable ATL/MPI set CCL_ATL_TRANSPORT=mpi
+2026:11:17-14:12:13:3100671 |CCL_WARN| could not get local_idx/count from environment variables, trying to get them from ATL
+2026:11:17-14:12:13:3100672 |CCL_WARN| did not find MPI-launcher specific variables, switch to ATL/OFI, to force enable ATL/MPI set CCL_ATL_TRANSPORT=mpi
+2026:11:17-14:12:13:3100672 |CCL_WARN| could not get local_idx/count from environment variables, trying to get them from ATL
+2026:11:17-14:12:14:3100671:[0] |CCL_WARN| topology recognition shows PCIe connection between devices. If this is not correct, you can disable topology recognition, with CCL_TOPO_FABRIC_VERTEX_CONNECTION_CHECK=0. This will assume XeLinks across devices
+La capitale d'Italia è Roma.
+[stats] prompt new 83/83 tok, 63 tok in 23.46s = 2.7 tok/s
+The capital of France is Paris.
+[stats] prompt new 168/168 tok, 49 tok in 15.31s = 3.2 tok/s
+== regress gemma4 exit 0 (14:16:15)
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== comparison off: layer dump, n-cpu-moe 34 (14:16:15)
+dump: 49780 lines in results/jobs/S17-8/dump.txt
+== dump exit 0 (14:16:59)
+== summary: pytest=0 ours=0 diff=1 ppl=0 pplcmp=0 regress_gptoss=1 chat=0 gemma4=0
+== end 14:16:59
