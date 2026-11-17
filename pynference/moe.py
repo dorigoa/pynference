@@ -551,6 +551,10 @@ class MoE:
         act = ACTIVATIONS[activation]
         self.act = functools.partial(act, alpha=alpha, limit=limit) \
             if activation == "swiglu_oai" else act
+        # kernels.swiglu_oai is a fused implementation of that one activation
+        # (S18): decode_body may use it on GPU only when self.act is it too
+        self._fused_act = activation == "swiglu_oai"
+        self.alpha, self.limit = alpha, limit
         self.shared = tuple(shared) if shared is not None else None
         self.local = set(store.local_ids[layer])
         self._scratch: dict[tuple[str, int, int], torch.Tensor] = {}
@@ -637,7 +641,8 @@ class MoE:
 
     def decode_body(self, x: torch.Tensor) -> torch.Tensor:
         """One resolve batch over the static buffers: indexed GEMVs (gate, up,
-        down) + per-expert biases + swiglu_oai, weighted-summed into y. No
+        down) + per-expert biases + activation (fused swiglu_oai kernel on
+        GPU), weighted-summed into y. No
         zeroing (the driver zeroes once per layer so several batches
         accumulate) and no all_reduce/residual — those live in the neighbour
         segments, so every rank replays the same collective count whatever its
@@ -650,9 +655,10 @@ class MoE:
         if self.eb is not None:  # per-expert bias, indexed by global id
             d["g"] += self.eb[0][d["ei"]]
             d["u"] += self.eb[1][d["ei"]]
-        if torch.device(x.device).type == "xpu":
+        if self._fused_act and torch.device(x.device).type == "xpu":
             from . import kernels as K   # Triton at call time only: header note
-            K.swiglu_oai(d["g"], d["u"], out=d["a"])
+            K.swiglu_oai(d["g"], d["u"], out=d["a"],
+                         alpha=self.alpha, limit=self.limit)
         else:
             d["a"].copy_(self.act(d["g"], d["u"]))
         gemv_indexed(self.down.qtype, bufs["down"], d["a"], d["slots"], d["d"])
