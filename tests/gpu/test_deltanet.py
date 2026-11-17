@@ -194,7 +194,7 @@ def _layer0_weights():
 def _chunked_case(x, hist, w, g, beta, state, H_k, T1, tag):
     """prefill of T1 tokens + decode of the rest vs the f64 reference."""
     T = x.shape[0]
-    ref = _ref_pipeline(x, hist, w, g, beta, state, H_k)
+    ref = _ref_pipeline(x, hist, w, g, beta, state, H_k, state.shape[2])
     hist_g = hist.to(DEV)
     state_g = state.to(DEV)
     out_p = deltanet.prefill(x[:T1].to(DEV), hist_g, w.to(DEV),

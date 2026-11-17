@@ -303,11 +303,14 @@ def _conv_prefill_k(X, ST, STN, W, Y, T, C, stride_x, stride_st, stride_stn,
     y = acc * tl.sigmoid(acc)
     tl.store(Y + tb[:, None] * C + cb[None, :], y, mask=(tb < T)[:, None] & mc[None, :])
     if tl.program_id(1) == 0:
+        # `r`/`xv` are still live from the loop above with block shapes; the
+        # history branch needs fresh names or Triton rejects the redefinition.
         for u in tl.static_range(K - 1):
-            r = T + u
-            hv = tl.load(ST + r * stride_st + cb, mask=(r < K - 1) & mc, other=0.0)
-            xv = tl.load(X + (r - (K - 1)) * stride_x + cb, mask=(r >= K - 1) & mc, other=0.0)
-            tl.store(STN + u * stride_stn + cb, hv + xv, mask=mc)
+            r2 = T + u
+            hv = tl.load(ST + r2 * stride_st + cb, mask=(r2 < K - 1) & mc, other=0.0)
+            xv2 = tl.load(X + (r2 - (K - 1)) * stride_x + cb,
+                          mask=(r2 >= K - 1) & mc, other=0.0)
+            tl.store(STN + u * stride_stn + cb, hv + xv2, mask=mc)
 
 
 @triton.jit

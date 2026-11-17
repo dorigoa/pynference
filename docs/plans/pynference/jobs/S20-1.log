@@ -1,0 +1,29 @@
+== start 00:38:37
+== pytest tests/gpu (00:38:37)
+== pytest gpu exit 1 (00:42:23)
+FAILED tests/gpu/test_deltanet.py::test_real_weights_full - TypeError: _ref_p...
+FAILED tests/gpu/test_deltanet.py::test_real_weights_rank - TypeError: _ref_p...
+7 failed, 121 passed, 1 skipped, 1 warning in 225.50s (0:03:45)
+FAILED tests/gpu/test_deltanet.py::test_prefill_small - triton.compiler.error...
+FAILED tests/gpu/test_deltanet.py::test_prefill_small_k2 - triton.compiler.er...
+FAILED tests/gpu/test_deltanet.py::test_prefill_full_shapes - triton.compiler...
+FAILED tests/gpu/test_deltanet.py::test_prefill_rank_shapes - triton.compiler...
+FAILED tests/gpu/test_deltanet.py::test_prefill_then_decode - triton.compiler...
+FAILED tests/gpu/test_deltanet.py::test_real_weights_full - TypeError: _ref_p...
+FAILED tests/gpu/test_deltanet.py::test_real_weights_rank - TypeError: _ref_p...
+== timing deltanet (00:42:24)
+== timing exit 1 (00:42:26)
+t decode 16/48/S128 0.051 ms
+== regress gemma4 (00:42:26)
+== regress gemma4 exit 0 (00:44:32)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 12.1s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+-- oom lines (job safety net):
+== summary: pytest=1 timing=1 regress_gemma4=0
+== end 00:44:32
