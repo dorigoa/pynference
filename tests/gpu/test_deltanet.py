@@ -9,6 +9,8 @@ state layout and head mapping documented in pynference/deltanet.py.
 Acceptance is the S20 bar: state relative error <= 1e-4, output cosine
 >= 0.9999.
 """
+import os
+
 import numpy as np
 import pytest
 
@@ -134,7 +136,7 @@ def test_prefill_then_decode():
     state_g = state.to(DEV)
     out_p = deltanet.prefill(x[:T1].to(DEV), hist_g, w.to(DEV), g[:T1].to(DEV),
                              beta[:T1].to(DEV), state_g, H_k)
-    assert _cos(out_p.cpu(), ref[0]) >= TOL_COS_OUT, "p1 out"
+    assert _cos(out_p.cpu(), ref[0][:T1]) >= TOL_COS_OUT, "p1 out"
     for t in range(T1, T1 + T2):
         out = deltanet.decode(x[t].to(DEV), hist_g, w.to(DEV), g[t].to(DEV),
                               beta[t].to(DEV), state_g, H_k)
@@ -158,3 +160,76 @@ def test_decode_matches_ref_step_by_step():
         assert _rel_err(state_g.cpu(), st_ref) <= TOL_REL_STATE, f"state t={t}"
         assert _cos(out.cpu(), out_ref[t]) >= TOL_COS_OUT, f"out t={t}"
         torch.testing.assert_close(hist_g.cpu(), hist_ref.float(), rtol=0, atol=0)
+
+
+# ------------------------------------------------------- real layer-0 weights
+QWEN_MODEL = "/nvme/gguf/Qwen3.8-27B-Q8_0.gguf"
+needs_qwen = pytest.mark.skipif(not os.path.exists(QWEN_MODEL),
+                                reason="Qwen3.8-27B GGUF not present")
+_REAL = None
+
+
+def _layer0_weights():
+    """(wq, conv) from blk.0: wq [10240, 5120] dequantized Q8_0 output rows,
+    conv [10240, 4] f32 conv taps (raw GGUF order, deltanet.py docstring).
+    Both are copies: the GGUFFile must be closeable (BufferError otherwise).
+    """
+    global _REAL
+    if _REAL is None:
+        from pynference.gguf import GGUFFile
+        from pynference.quant.ref import ref_dequant
+        f = GGUFFile(QWEN_MODEL)
+        t = f.tensors["blk.0.attn_qkv.weight"]
+        assert t.shape == (5120, 10240) and t.type == "Q8_0"   # S19 note
+        wq = ref_dequant(f.rows("blk.0.attn_qkv.weight", 0, t.n_rows), "Q8_0")
+        tc = f.tensors["blk.0.ssm_conv1d.weight"]
+        assert tc.shape == (4, 10240) and tc.type == "F32"
+        conv = np.array(f.rows("blk.0.ssm_conv1d.weight", 0, 10240)
+                        .view(np.float32).reshape(10240, 4))
+        f.close()
+        _REAL = (wq, conv)
+    return _REAL
+
+
+def _chunked_case(x, hist, w, g, beta, state, H_k, T1, tag):
+    """prefill of T1 tokens + decode of the rest vs the f64 reference."""
+    T = x.shape[0]
+    ref = _ref_pipeline(x, hist, w, g, beta, state, H_k)
+    hist_g = hist.to(DEV)
+    state_g = state.to(DEV)
+    out_p = deltanet.prefill(x[:T1].to(DEV), hist_g, w.to(DEV),
+                             g[:T1].to(DEV), beta[:T1].to(DEV), state_g, H_k)
+    assert _cos(out_p.cpu(), ref[0][:T1]) >= TOL_COS_OUT, f"{tag} p out"
+    for t in range(T1, T):
+        out = deltanet.decode(x[t].to(DEV), hist_g, w.to(DEV), g[t].to(DEV),
+                              beta[t].to(DEV), state_g, H_k)
+        assert _cos(out.cpu(), ref[0][t]) >= TOL_COS_OUT, f"{tag} d out t={t}"
+    assert _rel_err(state_g.cpu(), ref[1]) <= TOL_REL_STATE, f"{tag} state"
+    torch.testing.assert_close(hist_g.cpu(), ref[2].float(), rtol=0, atol=0)
+
+
+@needs_qwen
+def test_real_weights_full():
+    # real qkv projection and conv taps of Qwen3.8-27B layer 0 on random
+    # hidden states: x = h @ W_qkv^T, std ~1.1 like the live model
+    wq, conv = _layer0_weights()
+    T, H_k, H_v, S = 10, 16, 48, 128
+    _, hist, _, g, beta, state = _random_inputs(20, T, H_k, H_v, S)
+    h = torch.randn(T, 5120)                      # continues seed 20's stream
+    x = torch.tensor(h.numpy() @ wq.T)
+    _chunked_case(x, hist, torch.tensor(conv), g, beta, state, H_k, T1=8,
+                  tag="real full")
+
+
+@needs_qwen
+def test_real_weights_rank():
+    # per-rank shape (S19 TP plan): q heads 0-7 | k heads 0-7 | v heads 0-23,
+    # 40 heads x 128 = 5120 conv channels
+    wq, conv = _layer0_weights()
+    T, H_k, H_v, S = 8, 8, 24, 128
+    cols = np.r_[0:1024, 2048:3072, 4096:7168]
+    _, hist, _, g, beta, state = _random_inputs(21, T, H_k, H_v, S)
+    h = torch.randn(T, 5120)
+    x = torch.tensor(h.numpy() @ wq[cols].T)
+    _chunked_case(x, hist, torch.tensor(conv[cols]), g, beta, state, H_k,
+                  T1=6, tag="real rank")
