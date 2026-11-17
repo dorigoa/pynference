@@ -1,0 +1,192 @@
+"""Gated DeltaNet core for the Qwen3.8-27B recurrent layers (plan S20).
+
+CPU references for the three pieces the Triton kernels must reproduce (S19
+map A, `delta-net-base.cpp` + `ggml/src/ggml-cpu/ops.cpp`):
+causal depthwise conv1d with state (kernel 4, no bias, then SiLU), the gated
+delta-rule recurrence over a 128x128 state per value head, and the gated RMS
+norm before `ssm_out`.
+
+Two independent references live side by side:
+
+* vectorized torch (`conv_prefill`, `delta_prefill`, `delta_decode`, ...) —
+  state held in natural layout, `state[h][i][j] = M[i][j]` with `i` the
+  key/query channel and `j` the value channel;
+* `*_ops_ref` numpy transcriptions of the llama.cpp CPU kernels
+  (`ggml_compute_forward_ssm_conv_f32` and
+  `ggml_compute_forward_gated_delta_net_one_chunk`, K=1, scalar-gate
+  variant), which keep ops.cpp's transposed scratch layout
+  `s_out[j*S + i] = M[i][j]` and its loops, computed in float32 like the
+  C++ code. They cross-check the vectorized path on CPU (S20 step 1) and
+  must stay untouched by kernel work.
+
+Conventions: batch is one sequence (decode and chunked prefill); value head
+`j` uses key/query head `j % H_k` — llama.cpp round-robin (ops.cpp:11079),
+not the `j // 3` the plan first guessed (S19 map A.12); the delta-rule
+output is scaled by 1/sqrt(S); the conv weight `w` is logical `[C, 4]`
+(channel-major taps), which is also the raw GGUF byte order of
+`ssm_conv1d` (`{4, 10240}` row-major, qwen35.cpp:87).
+"""
+from __future__ import annotations
+
+import numpy as np
+import torch
+
+
+def _key_map(n_heads: int, n_key_heads: int, device: torch.device) -> torch.Tensor:
+    """Index tensor mapping each value head to its key/query head (j % H_k)."""
+    return torch.arange(n_heads, device=device) % n_key_heads
+
+
+def _silu(x):
+    return x * torch.sigmoid(x)
+
+
+# ------------------------------------------------------------- conv with state
+def conv_prefill(x, conv_state, w):
+    """Causal depthwise conv over a token chunk, then SiLU (vectorized).
+
+    x:          [T, C]      per-token conv input (the qkv rows, post-projection)
+    conv_state: [K-1, C]    the K-1 oldest rows, oldest first
+    w:          [C, K]      taps per channel
+    returns:    y [T, C] after SiLU, new_state [K-1, C] (the K-1 newest rows)
+    """
+    ins = torch.cat([conv_state, x], dim=0)              # [K-1+T, C]
+    T, K = x.shape[0], w.shape[1]
+    idx = torch.arange(T, device=x.device).unsqueeze(1) + torch.arange(K, device=x.device)
+    y = (ins[idx] * w.t().unsqueeze(0)).sum(dim=1)       # y[t] = sum_i in[t+i] * w[i]
+    return _silu(y), ins[-(K - 1):].clone()
+
+
+def conv_decode(x_new, conv_state, w):
+    """One token through `conv_prefill` (T=1); x_new [C], y [C]."""
+    y, new_state = conv_prefill(x_new.unsqueeze(0), conv_state, w)
+    return y[0], new_state
+
+
+def conv_ops_ref(x, conv_state, w):
+    """Transcription of ggml_compute_forward_ssm_conv_f32 (ops.cpp:9811) + SiLU.
+
+    numpy/float32, explicit token/channel/tap loops like the C++ rows loop.
+    Same shapes and return values as `conv_prefill`.
+    """
+    x = np.asarray(x, dtype=np.float32)
+    conv_state = np.asarray(conv_state, dtype=np.float32)
+    w = np.asarray(w, dtype=np.float32)
+    ins = np.concatenate([conv_state, x], axis=0)        # {d_conv-1+n_t, d_inner}
+    ncs, nr = ins.shape
+    nc = w.shape[1]
+    T = x.shape[0]
+    out = np.empty((T, nr), dtype=np.float32)
+    for i2 in range(T):                                  # tokens
+        for i1 in range(nr):                             # d_inner row
+            sumf = np.float32(0.0)                       # f32 accumulator, as in ops.cpp
+            for i0 in range(nc):                         # d_conv
+                sumf += ins[i2 + i0, i1] * w[i1, i0]
+            out[i2, i1] = sumf
+    return out * (np.float32(1.0) / (np.float32(1.0) + np.exp(-out))), ins[-(nc - 1):].copy()
+
+
+# ----------------------------------------------------- gated delta recurrence
+def delta_prefill(q, k, v, g, beta, state):
+    """Gated delta rule over a token chunk, vectorized over heads and state.
+
+    q, k:       [T, H_k, S] post-conv, post-L2-norm
+    v:          [T, H_v, S]
+    g, beta:    [T, H_v]    log-decay (<= 0) and gate (in (0, 1))
+    state:      [H_v, S, S] running M, natural layout state[h][i][j] = M[i][j]
+    returns:    out [T, H_v, S] (scaled by 1/sqrt(S)), new_state [H_v, S, S]
+    """
+    T, H_k, S = q.shape
+    H_v = v.shape[1]
+    scale = 1.0 / (S ** 0.5)
+    M = state.clone()
+    km = _key_map(H_v, H_k, q.device)
+    kk = k[:, km]                                        # [T, H_v, S]
+    qq = q[:, km]
+    out = torch.empty_like(v)
+    for t in range(T):
+        M = M * torch.exp(g[t]).view(-1, 1, 1)           # M *= exp(g)
+        delta = (v[t] - torch.einsum('hij,hi->hj', M, kk[t])) * beta[t].view(-1, 1)
+        M = M + kk[t].unsqueeze(2) * delta.unsqueeze(1)  # M[i][j] += k[i] * delta[j]
+        out[t] = torch.einsum('hij,hi->hj', M, qq[t]) * scale
+    return out, M
+
+
+def delta_decode(q, k, v, g, beta, state):
+    """One token through `delta_prefill` (T=1); q,k [H_k,S], v [H_v,S], out [H_v,S]."""
+    out, new_state = delta_prefill(q.unsqueeze(0), k.unsqueeze(0), v.unsqueeze(0),
+                                   g.unsqueeze(0), beta.unsqueeze(0), state)
+    return out[0], new_state
+
+
+def delta_ops_ref(q, k, v, g, beta, state):
+    """Transcription of ggml_compute_forward_gated_delta_net_one_chunk (ops.cpp:11003).
+
+    numpy/float32, K=1 non-KDA variant: transposed scratch `s[j*S + i] =
+    M[i][j]` (ops.cpp:11104), per head then per token, with the three
+    per-channel loops (dot+beta, outer product, output dot) kept separate as
+    in the C++; the inner `ggml_vec_*` calls become whole-row numpy ops.
+    Same shapes and return values as `delta_prefill`.
+    """
+    q = np.asarray(q, dtype=np.float32)
+    k = np.asarray(k, dtype=np.float32)
+    v = np.asarray(v, dtype=np.float32)
+    g = np.asarray(g, dtype=np.float32)
+    beta = np.asarray(beta, dtype=np.float32)
+    state = np.asarray(state, dtype=np.float32)
+    T, H_k, S = q.shape
+    H_v = v.shape[1]
+    scale = np.float32(1.0) / np.sqrt(np.float32(S))
+    attn = np.empty((T, H_v, S), dtype=np.float32)
+    new_state = np.empty_like(state)
+    delta = np.empty(S, dtype=np.float32)
+    for iv1 in range(H_v):                               # rows = heads, one seq
+        s = np.ascontiguousarray(state[iv1].T).reshape(-1)  # copy: s[j*S+i] = M[i][j]
+        kd_all = np.ascontiguousarray(k[:, iv1 % H_k])
+        qd_all = np.ascontiguousarray(q[:, iv1 % H_k])
+        for t in range(T):
+            s *= np.exp(g[t, iv1], dtype=np.float32)     # ggml_vec_scale_f32
+            kd, qd = kd_all[t], qd_all[t]
+            b = beta[t, iv1]
+            for j in range(S):                           # delta[j] = (v[j] - dot(row_j, k)) * beta
+                row = s[j * S:(j + 1) * S]
+                ssum = np.dot(row, kd)                    # ggml_vec_dot_f32, f32 in/out
+                delta[j] = (v[t, iv1, j] - ssum) * b
+            for j in range(S):                           # outer product: row_j += delta[j] * k
+                row = s[j * S:(j + 1) * S]
+                row += kd * delta[j]                     # ggml_vec_mad_f32
+            for j in range(S):                           # attn[j] = dot(row_j, q) * scale
+                row = s[j * S:(j + 1) * S]
+                attn[t, iv1, j] = np.dot(row, qd) * scale
+        new_state[iv1] = s.reshape(S, S).T               # undo the transposed scratch
+    return attn, new_state
+
+
+# ------------------------------------------------------------------ norms
+def l2norm_qk(x, eps):
+    """Per-head L2 norm of q/k rows: x / sqrt(sum(x^2) + eps) (Mappa A.8)."""
+    return x * torch.rsqrt((x * x).sum(dim=-1, keepdim=True) + eps)
+
+
+def norm_gated(out, z, w_norm, eps):
+    """RMSNorm over each head's S channels with weight, gated by SiLU (Mappa A.10).
+
+    out:     [..., S] per-head slices (e.g. [H_v, S] for one token)
+    z:       same shape as out, the `attn_gate` slice for the token
+    w_norm:  [S] ssm_norm weight
+    returns: same shape as out
+    """
+    n = out.shape[-1]
+    return out * torch.rsqrt((out * out).sum(dim=-1, keepdim=True) / n + eps) \
+        * w_norm * _silu(z)
+
+
+def norm_gated_ops_ref(out, z, w_norm, eps):
+    """numpy/float32 per-head transcription of build_norm_gated (qwen35.cpp:275)."""
+    out = np.asarray(out, dtype=np.float32)
+    z = np.asarray(z, dtype=np.float32)
+    w_norm = np.asarray(w_norm, dtype=np.float32)
+    n = out.shape[-1]
+    rms = np.sqrt((out * out).sum(-1) / np.float32(n) + np.float32(eps))
+    y = (out / rms[..., None]) * w_norm
+    return y * (z / (np.float32(1.0) + np.exp(-z)))
