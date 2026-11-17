@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # C10 regression: rerun the S6 checks and compare against the golden baseline.
 # Run only inside a GPU job (2.4). Prints PASS or FAIL, exits 0 or 1.
-#   usage: scripts/regress.sh gemma4
+#   usage: scripts/regress.sh gemma4|gpt-oss-120b
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 case "${1:-}" in
-  gemma4) MODEL=/nvme/gguf/gemma-4-31B/gemma-4-31B-it-Q8_0.gguf; G=tests/golden/gemma4 ;;
-  *) echo "usage: scripts/regress.sh gemma4"; exit 2 ;;
+  gemma4) MODEL=/nvme/gguf/gemma-4-31B/gemma-4-31B-it-Q8_0.gguf; G=tests/golden/gemma4; DECODE=graph ;;
+  gpt-oss-120b) MODEL=/nvme/gguf/gpt-oss-120b/gpt-oss-120b-MXFP4.gguf
+                G=tests/golden/gpt-oss-120b; DECODE=fused ;;   # graph decode is S18
+  *) echo "usage: scripts/regress.sh gemma4|gpt-oss-120b"; exit 2 ;;
 esac
 if [ ! -f "$MODEL" ] || [ ! -f "$G/ours_baseline.json" ] || [ ! -f "$G/ours_ppl.txt" ]; then
   echo "FAIL: missing model or golden files"; exit 1
@@ -16,13 +18,44 @@ fi
 OUT=$(mktemp -d /tmp/pynference-regress-XXXX)
 trap 'rm -rf "$OUT"' EXIT
 
-echo "== regress $1: ours --ref (graph) $(date +%T)"
-timeout 900 torchrun --nproc_per_node=2 bench/compare_probs.py ours --ref "$G/ref_probs.json" -m "$MODEL" \
-    --decode graph -o "$OUT/ours_now.json" 2>&1 | grep -v -E "CCL_WARN|^W1" | tail -n 6
+# bench/ scripts hardcode the Gemma-only Tokenizer class; for gpt-oss the
+# GGUF-aware factory (pynference.tokenizer.load_tokenizer, as in cli/server)
+# is rebound at runtime instead — bench/ stays untouched (S17).
+if [ "$1" = gpt-oss-120b ]; then
+  cat > "$OUT/run_bench.py" <<'PYEOF'
+"""Run a bench/ script with load_tokenizer as its tokenizer factory (S17)."""
+import os
+import sys
+
+sys.path.insert(0, os.getcwd())
+from pynference.tokenizer import load_tokenizer  # noqa: E402
+
+module, argv = sys.argv[1], sys.argv[2:]
+mod = __import__(module, fromlist=["main"])
+mod.Tokenizer = load_tokenizer
+sys.argv = [module] + argv
+mod.main()
+PYEOF
+fi
+
+echo "== regress $1: ours --ref ($DECODE) $(date +%T)"
+if [ "$1" = gpt-oss-120b ]; then
+  timeout 900 torchrun --nproc_per_node=2 "$OUT/run_bench.py" bench.compare_probs ours \
+      --ref "$G/ref_probs.json" -m "$MODEL" --decode "$DECODE" -o "$OUT/ours_now.json" \
+      2>&1 | grep -v -E "CCL_WARN|^W1" | tail -n 6
+else
+  timeout 900 torchrun --nproc_per_node=2 bench/compare_probs.py ours --ref "$G/ref_probs.json" -m "$MODEL" \
+      --decode "$DECODE" -o "$OUT/ours_now.json" 2>&1 | grep -v -E "CCL_WARN|^W1" | tail -n 6
+fi
 echo "== ours exit ${PIPESTATUS[0]} ($(date +%T))"
 
 echo "== regress $1: ppl $(date +%T)"
-timeout 900 torchrun --nproc_per_node=2 bench/ppl.py -m "$MODEL" -c 512 --chunks 8 > "$OUT/ppl.log" 2>&1
+if [ "$1" = gpt-oss-120b ]; then
+  timeout 900 torchrun --nproc_per_node=2 "$OUT/run_bench.py" bench.ppl -m "$MODEL" \
+      -c 512 --chunks 8 > "$OUT/ppl.log" 2>&1
+else
+  timeout 900 torchrun --nproc_per_node=2 bench/ppl.py -m "$MODEL" -c 512 --chunks 8 > "$OUT/ppl.log" 2>&1
+fi
 echo "== ppl exit $? ($(date +%T))"
 grep -E "Final estimate" "$OUT/ppl.log" | tail -n 1
 
