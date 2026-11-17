@@ -357,7 +357,7 @@ class GPTOss:
         dense = self._dense_bytes + tiny + cos_sin
         kv = self.kv_bytes()
         scratch = 1 << 30   # bf16 dequant scratch (~50 MB) + prefill transients
-        budget = max(int(D8_BUDGET_GB[tp.rank] * 1e9) - dense - kv - scratch, 0)
+        budget = self._expert_budget(dense, kv, scratch)
         self._weights_bytes, self._scratch_bytes = dense, scratch   # for memory_report (C3)
         if tp.is_main:
             print(f"  MoE: {n_exp} experts x {c.n_layer} layers, budget "
@@ -384,6 +384,28 @@ class GPTOss:
     # recoverable per-buffer. So: drop the budget a step and rebuild — same
     # residency plan, fewer resident experts, more pinned RAM (C5-checked).
     EXPERT_BUDGET_MIN_GB = 8.0
+
+    # Driver-capacity cap (S17, jobs S17-2/S17-3): plan D8 is an idle-GPU
+    # capacity (S1); a 1 GiB-chunk probe fits 31 GiB, but with hundreds of
+    # 264 MB store buffers alive the rank dies at ~25.5 GiB held by torch
+    # (OutOfMemoryError in S17-2, SIGKILL in S17-3). So cap the store at
+    # device total minus a measured overhead, not at what D8 hopes for.
+    EXPERT_GPU_OVERHEAD_BYTES = 7 << 30
+
+    def _expert_budget(self, dense: int, kv: int, scratch: int) -> int:
+        """Store budget: min of the D8 plan budget and (device total -
+        EXPERT_GPU_OVERHEAD_BYTES - dense - kv - scratch)."""
+        plan = max(int(D8_BUDGET_GB[self.tp.rank] * 1e9) - dense - kv - scratch, 0)
+        if torch.xpu.device_count() == 0:      # CPU tests hide the GPUs
+            return plan
+        gc.collect()
+        torch.xpu.empty_cache()   # hand dense-load cache blocks back first
+        try:
+            total = torch.xpu.mem_get_info(self.tp.device)[1]
+        except (AttributeError, RuntimeError):
+            total = int(D8_BUDGET_GB[self.tp.rank] * 1e9)
+        cap = max(total - self.EXPERT_GPU_OVERHEAD_BYTES - dense - kv - scratch, 0)
+        return min(plan, cap)
 
     def _expert_store(self, groups, tp, budget):
         from ..moe import ExpertStore   # lazy import (module header note)

@@ -228,3 +228,49 @@ def test_expert_store_ladder_gives_up_below_floor(monkeypatch):
     m = _stub(seed=31)
     with pytest.raises(torch.OutOfMemoryError):
         m._expert_store_ladder(None, m.tp, 9e9)
+
+
+DENSE, KV, SCRATCH = 1_400_000_000, 150_000_000, 1 << 30
+PLAN0 = int(30.0e9) - DENSE - KV - SCRATCH     # rank 0, D8_BUDGET_GB[0] = 30.0
+
+
+def test_expert_budget_is_plan_when_gpus_hidden(monkeypatch):
+    monkeypatch.setattr(torch.xpu, "device_count", lambda: 0)
+    m = _stub(seed=41)
+    assert m._expert_budget(DENSE, KV, SCRATCH) == PLAN0
+
+
+def test_expert_budget_capped_by_device_total(monkeypatch):
+    """Jobs S17-2/3: store dies at ~25.5 GiB held though the probe fits 31
+    GiB -> cap the store at total - EXPERT_GPU_OVERHEAD_BYTES - the rest."""
+    total = 34_236_000_000                     # 31.89 GiB, the real B70
+    monkeypatch.setattr(torch.xpu, "device_count", lambda: 1)
+    monkeypatch.setattr(torch.xpu, "empty_cache", lambda: None)
+    monkeypatch.setattr(torch.xpu, "mem_get_info",
+                        lambda dev: (total - 2_000_000_000, total), raising=False)
+    m = _stub(seed=43)
+    want = total - GPTOss.EXPERT_GPU_OVERHEAD_BYTES - DENSE - KV - SCRATCH
+    assert want < PLAN0
+    assert m._expert_budget(DENSE, KV, SCRATCH) == want
+
+
+def test_expert_budget_plan_when_total_is_smaller_than_overhead_cap(monkeypatch):
+    """Plenty of room: the D8 plan budget still wins over the cap."""
+    total = 48_000_000_000
+    monkeypatch.setattr(torch.xpu, "device_count", lambda: 1)
+    monkeypatch.setattr(torch.xpu, "empty_cache", lambda: None)
+    monkeypatch.setattr(torch.xpu, "mem_get_info", lambda dev: (total, total), raising=False)
+    m = _stub(seed=47)
+    assert m._expert_budget(DENSE, KV, SCRATCH) == PLAN0
+
+
+def test_expert_budget_falls_back_to_d8_without_mem_get_info(monkeypatch):
+    def boom(dev):
+        raise AttributeError("no mem_get_info")
+
+    monkeypatch.setattr(torch.xpu, "device_count", lambda: 1)
+    monkeypatch.setattr(torch.xpu, "empty_cache", lambda: None)
+    monkeypatch.setattr(torch.xpu, "mem_get_info", boom, raising=False)
+    m = _stub(seed=53)
+    want = int(30.0e9) - GPTOss.EXPERT_GPU_OVERHEAD_BYTES - DENSE - KV - SCRATCH
+    assert m._expert_budget(DENSE, KV, SCRATCH) == want
