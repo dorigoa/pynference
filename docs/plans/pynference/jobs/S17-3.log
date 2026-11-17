@@ -1,0 +1,104 @@
+== start 09:23:06
+== probe exit 0 (09:23:18)
+probe GPU 0: Intel(R) Arc(TM) Pro B70 Graphics total 31.89 GiB
+probe GPU 0: allocati 31 GiB prima di OOM
+probe GPU 1: Intel(R) Arc(TM) Pro B70 Graphics total 31.89 GiB
+probe GPU 1: allocati 31 GiB prima di OOM
+== pytest gpu exit 0 (09:26:01)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+108 passed, 1 skipped, 1 warning in 161.48s (0:02:41)
+== ours exit 1 (09:27:01)
+  store: layer 0 gate: 56 resident + 2 swap slots -> 256 MB
+  store: layer 0 gate: 58 resident + 2 swap slots -> 264 MB
+  store: layer 0 up: 58 resident + 2 swap slots -> 264 MB
+  store: layer 0 up: 56 resident + 2 swap slots -> 256 MB
+  store: layer 0 down: 58 resident + 2 swap slots -> 264 MB
+  store: layer 0 down: 56 resident + 2 swap slots -> 256 MB
+  store: layer 1 gate: 58 resident + 2 swap slots -> 264 MB
+  store: layer 1 gate: 56 resident + 2 swap slots -> 256 MB
+  store: layer 1 up: 58 resident + 2 swap slots -> 264 MB
+  store: layer 1 up: 56 resident + 2 swap slots -> 256 MB
+  store: layer 1 down: 58 resident + 2 swap slots -> 264 MB
+  store: layer 1 down: 56 resident + 2 swap slots -> 256 MB
+  store: layer 2 gate: 58 resident + 2 swap slots -> 264 MB
+  store: layer 2 gate: 56 resident + 2 swap slots -> 256 MB
+  store: layer 2 up: 58 resident + 2 swap slots -> 264 MB
+  store: layer 2 up: 56 resident + 2 swap slots -> 256 MB
+  store: layer 2 down: 58 resident + 2 swap slots -> 264 MB
+  store: layer 2 down: 56 resident + 2 swap slots -> 256 MB
+  store: layer 3 gate: 58 resident + 2 swap slots -> 264 MB
+  store: layer 3 gate: 56 resident + 2 swap slots -> 256 MB
+[0]:
+  time      : 2026-11-17_09:26:58
+  host      : ubuntu
+  rank      : 1 (local_rank: 1)
+  exitcode  : -9 (pid: 2717602)  (SIGKILL)
+  error_file: <N/A>
+  traceback : Signal 9 (SIGKILL) received by PID 2717602
+========================================================
+== diff strict exit 1 (09:27:02)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/results/jobs/S17-3/run_bench.py", line 12, in <module>
+    mod.main()
+    ~~~~~~~~^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 192, in main
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S17-3/ours.json'
+== ppl exit 1 (09:28:11)
+  store: layer 0 gate: 58 resident + 2 swap slots -> 264 MB
+  store: layer 0 gate: 56 resident + 2 swap slots -> 256 MB
+  store: layer 0 up: 58 resident + 2 swap slots -> 264 MB
+  store: layer 0 up: 56 resident + 2 swap slots -> 256 MB
+  store: layer 0 down: 58 resident + 2 swap slots -> 264 MB
+  store: layer 0 down: 56 resident + 2 swap slots -> 256 MB
+  exitcode  : -9 (pid: 2718725)  (SIGKILL)
+  error_file: <N/A>
+  traceback : Signal 9 (SIGKILL) received by PID 2718725
+=========================================================
+PPL_EXTRACT_FAIL
+== ppl compare exit 3 (09:28:12)
+== something failed: layer dump for step 4, n-cpu-moe 34 (09:28:12)
+dump: 49780 lines in results/jobs/S17-3/dump.txt
+== dump exit 0 (09:28:54)
+common_debug_cb_eval:               attn_out-0 = (f32)        ADD(node_29{2880, 5, 1, 1}, blk.0.attn_output.bias{2880, 1, 1, 1}}) = {2880, 5, 1, 1}
+common_debug_cb_eval:              attn_norm-1 = (f32)        MUL(norm-1{2880, 5, 1, 1}, blk.1.attn_norm.weight{2880, 1, 1, 1}}) = {2880, 5, 1, 1}
+common_debug_cb_eval:           ffn_moe_out-34 = (f32)        ADD(node_1961{2880, 5, 1, 1}, ffn_moe_weighted-34 (view){2880, 5, 1, 1}}) = {2880, 5, 1, 1}
+common_debug_cb_eval:           ffn_moe_out-35 = (f32)        ADD(node_2019{2880, 1, 1, 1}, ffn_moe_weighted-35 (view){2880, 1, 1, 1}}) = {2880, 1, 1, 1}
+-- header stems present:
+             attn_norm
+            attn_norm
+              attn_out
+             attn_out
+        attn_post_norm
+       attn_post_norm
+attn_post_norm
+       cache_k_l
+      cache_k_l
+cache_k_l
+       cache_v_l
+      cache_v_l
+cache_v_l
+                    embd
+               ffn_inp
+              ffn_inp
+       ffn_moe_argsort
+      ffn_moe_argsort
+          ffn_moe_down
+         ffn_moe_down
+   ffn_moe_down_biased
+  ffn_moe_down_biased
+          ffn_moe_gate
+         ffn_moe_gate
+   ffn_moe_gate_biased
+  ffn_moe_gate_biased
+        ffn_moe_logits
+       ffn_moe_logits
+           ffn_moe_out
+          ffn_moe_out
+== summary: pytest=0 ours=1 diff=1 ppl=1 pplcmp=3
+== end 09:28:54
