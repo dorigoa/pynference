@@ -1,0 +1,74 @@
+== start 16:06:16
+== pytest gpu exit 0 (16:08:58)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+110 passed, 1 skipped, 1 warning in 161.05s (0:02:41)
+== ours exit 0 (16:10:45)
+  MoE: 1234 of 2304 local experts resident, 72 swap slots, store 17.26 GB, pinned 0.00 GB
+  gpt-oss: load done in 30.7s
+  gpt-oss: load done in 30.7s
+chat-it: 'analysisThe user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in una '
+chat-en: 'analysisWe need to write a haiku about the sea. Haiku is 5-7-5 syll'
+code: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, '
+raw: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years,'
+== diff strict exit 0 (16:10:45)
+chat-it  same greedy tokens 24/24, max |dp| top-10 0.0484, mean partial KL 4.60e-04
+   ref:  '<|channel|>analysis<|message|>The user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in un'
+   ours: 'analysisThe user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase'
+chat-en  same greedy tokens 24/24, max |dp| top-10 0.0205, mean partial KL 5.48e-04
+   ref:  '<|channel|>analysis<|message|>We need to write a haiku about the sea. Haiku is 5-7-5 syll'
+   ours: 'analysisWe need to write a haiku about the sea. Haiku is 5-7-5 syll'
+code     same greedy tokens 24/24, max |dp| top-10 0.0308, mean partial KL 2.19e-04
+   ref:  '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+   ours: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+raw      same greedy tokens 24/24, max |dp| top-10 0.0265, mean partial KL 2.30e-03
+   ref:  ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+   ours: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+C8 strict: PASS
+== ours (2nd run) exit 0 (16:12:24)
+== ours (PYI_NONDETERMINISTIC=1) exit 0 (16:14:02)
+2nd run: chat-it  greedy same, bitwise yes, max |dp| 0.00e+00
+2nd run: chat-en  greedy same, bitwise yes, max |dp| 0.00e+00
+2nd run: code     greedy same, bitwise yes, max |dp| 0.00e+00
+2nd run: raw      greedy same, bitwise yes, max |dp| 0.00e+00
+2nd run: IDENTICAL (worst |dp| 0.00e+00)
+PYI_NONDETERMINISTIC=1: chat-it  greedy same, bitwise no, max |dp| 9.16e-03
+PYI_NONDETERMINISTIC=1: chat-en  greedy same, bitwise no, max |dp| 4.10e-02
+PYI_NONDETERMINISTIC=1: code     greedy same, bitwise no, max |dp| 1.01e-02
+PYI_NONDETERMINISTIC=1: raw      greedy same, bitwise no, max |dp| 1.51e-02
+PYI_NONDETERMINISTIC=1: not identical (worst |dp| 4.10e-02)
+== ppl exit 0 (16:16:33)
+Final estimate: PPL = 1.6095 +/- 0.04047  (2040 scored tokens, 109.6s)
+RES ppl ours 1.6095 ref 1.5995 rel 0.625% (limit 1%)
+== ppl compare exit 0 (16:16:33)
+== baseline ours/ppl copied into tests/golden/gpt-oss-120b
+== regress gpt-oss exit 0 (16:20:41)
+raw: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years,'
+== ours exit 0 (16:18:10)
+== regress gpt-oss-120b: ppl 16:18:10
+== ppl exit 0 (16:20:41)
+Final estimate: PPL = 1.6095 +/- 0.04047  (2040 scored tokens, 111.2s)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 0.00e+00 over top-10
+ppl: baseline 1.6095, now 1.6095, rel diff 0.000%
+PASS
+PASS
+== chat exit 0 (16:22:16)
+  MoE: 128 experts x 36 layers, budget 17.22 GB (dense 1.34, kv 0.08, scratch 1.07)
+
+  MoE: 1230 of 2304 local experts resident, 72 swap slots, store 17.21 GB, pinned 0.00 GB
+  gpt-oss: load done in 26.6s
+La capitale d'Italia è Roma.
+[stats] prompt new 83/83 tok, 66 tok in 24.69s = 2.7 tok/s
+The capital of France is Paris.
+[stats] prompt new 171/171 tok, 49 tok in 15.70s = 3.1 tok/s
+== regress gemma4 exit 0 (16:24:25)
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== summary: pytest=0 ours=0 diff=0 ppl=0 pplcmp=0 regress_gptoss=0 chat=0 gemma4=0
+== end 16:24:25
