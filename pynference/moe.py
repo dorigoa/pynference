@@ -571,7 +571,10 @@ class MoE:
         res = [p for p in sel if p[0] in m.resident]
         mis = [p for p in sel if p[0] not in m.resident]
         step = max(X, 1)
-        batches = [res + mis[i:i + step] for i in range(0, len(mis), step)] or [res]
+        # residents ride once, with the first X misses; further misses follow in
+        # blocks of X. (Until S17-8 every block repeated the residents, so with
+        # more misses than swap slots a resident expert was summed 2-3 times.)
+        batches = [res + mis[:step]] + [mis[i:i + step] for i in range(step, len(mis), step)]
         for b in batches:
             if not b:
                 continue

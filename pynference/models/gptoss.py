@@ -128,6 +128,25 @@ def rms_norm(x: torch.Tensor, w: torch.Tensor, eps: float) -> torch.Tensor:
     return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps) * w
 
 
+def dense_prefill(lin, x: torch.Tensor) -> torch.Tensor:
+    """Prompt-path (M > 1) dense projection in fp32: x [M, K] -> [M, N] float32.
+
+    QLinear's M > 1 path (quant/q8_0.py) rounds both the dequantized Q8_0
+    weight and the activations to bf16 (~2^-9 relative each). On gpt-oss that
+    flips C8 near-ties: in the S17 offline check (teacher-forced fp32 CPU
+    model on the ref_probs prompts) q/k/v/o in bf16 matched llama.cpp on 3 of
+    4 prompts, in fp32 on 4 of 4 (the MoE experts in bf16 made no difference).
+    The fp32 weight is rebuilt exactly from the int8 values and the fp16 block
+    scales for this call only (~60 MB transient per rank). Objects without
+    that layout (the CPU test stubs) are just called."""
+    qs, d = getattr(lin, "qs", None), getattr(lin, "d", None)
+    if qs is None or d is None:
+        return lin(x)
+    n, k = qs.shape
+    w = (qs.view(n, k // 32, 32).float() * d.float()[..., None]).view(n, k)
+    return torch.nn.functional.linear(x.float(), w)
+
+
 def rope_neox(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
     """x [T, H, D]; cos/sin [T, R/2]. NEOX: rotates pairs (i, i + R/2) of the first R dims."""
     half = cos.shape[-1]
@@ -269,6 +288,13 @@ class GPTOss:
     def __init__(self, g: GGUFFile, tp: TP, max_ctx: int = 8192, kv_dtype=torch.float16):
         self.g, self.tp, self.cfg = g, tp, GPTOSSConfig.from_gguf(g)
         self.max_ctx, self.kv_dtype = max_ctx, kv_dtype
+        # Reproducible runs (S17-8: two runs of the same code differed by up to
+        # 6e-3 in a probability, prefill included: the router turns tiny
+        # accumulation-order noise into a different expert). oneDNN, which runs
+        # F.linear/matmul on XPU (prefill GEMMs, router, prefill attention),
+        # honours this process-wide switch; PYI_NONDETERMINISTIC=1 is the A/B.
+        if not os.environ.get("PYI_NONDETERMINISTIC"):
+            torch.backends.mkldnn.deterministic = True
         c, dev = self.cfg, tp.device
         if c.n_head % tp.world or c.n_head_kv % tp.world:
             raise ValueError(f"heads not divisible by {tp.world} GPUs")
@@ -567,7 +593,7 @@ class GPTOss:
         c, L, tp = self.cfg, self.layers[il], self.tp
         T, Hq, Hkv, D = x.shape[0], self.n_head_l, self.n_kv_l, c.head_dim
         h = rms_norm(x, L.attn_norm, c.eps)
-        qkv = L.qkv(h)
+        qkv = dense_prefill(L.qkv, h)   # fp32, not QLinear's bf16 M > 1 path (C8, S17-9)
         b = L.qkv_bias
         qb = b[:Hq * D].view(Hq, D)
         kb = b[Hq * D:Hq * D + Hkv * D].view(Hkv, D)
@@ -579,7 +605,7 @@ class GPTOss:
         q = rope_neox(q, cos, sin)
         k = rope_neox(k, cos, sin)
         a = self._attention(il, q, k, v, pos, pos0)
-        o = L.o(a)
+        o = dense_prefill(L.o, a)
         if L.o_bias is not None:
             o = o + L.o_bias
         return tp.all_reduce(o)

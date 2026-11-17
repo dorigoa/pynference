@@ -205,6 +205,27 @@ def test_memory_report_keys():
     assert r["cache"] == want
 
 
+def test_dense_prefill_is_fp32_from_q8_0_bytes():
+    # S17-9: the prompt-path q/k/v/o run in fp32 rebuilt from the Q8_0 int8
+    # values and fp16 scales (QLinear's own M > 1 path is bf16: C8 near-ties)
+    import numpy as np
+    from types import SimpleNamespace
+    from pynference.models.gptoss import dense_prefill
+    from pynference.quant.ref import ref_dequant
+    from pynference.quant.testing import make_test_blocks
+    n, k = 48, 96
+    raw = make_test_blocks("Q8_0", n, k, seed=7)
+    blocks = torch.from_numpy(np.array(raw, copy=True)).view(n, k // 32, 34)
+    lin = SimpleNamespace(qs=blocks[:, :, 2:].contiguous().view(torch.int8).view(n, k),
+                          d=blocks[:, :, :2].contiguous().view(torch.float16).view(n, k // 32))
+    x = torch.randn(5, k, generator=torch.Generator().manual_seed(1))
+    w = torch.from_numpy(ref_dequant(raw, "Q8_0").reshape(n, k))
+    torch.testing.assert_close(dense_prefill(lin, x), x @ w.T, rtol=1e-6, atol=1e-6)
+    assert not torch.equal(dense_prefill(lin, x),
+                           (x.bfloat16() @ w.bfloat16().T).float())  # the old bf16 path
+    assert torch.equal(dense_prefill(lambda t: t * 2, x), x * 2)  # stubs: called as is
+
+
 def test_expert_store_ladder_retries_on_oom(monkeypatch):
     """S17-2 OOM fix: each OutOfMemoryError drops the budget 10% and retries."""
     calls = []

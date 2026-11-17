@@ -307,6 +307,65 @@ def test_moe_routing_and_expert_bias_validation():
                           torch.zeros(E, k, dtype=torch.float16)))
 
 
+# ------------------------------------------------------------- decode batching
+
+class _SlotStore:
+    """CPU stand-in for ExpertStore: the real SlotMap, one fp32 weight per slot."""
+
+    def __init__(self, W, resident, swap):
+        from types import SimpleNamespace
+        self.W = W
+        self.tp = SimpleNamespace(rank=0, world=1, all_reduce=lambda y: y)
+        self.layers = {0: {"gate": _group(name="gate", n=32), "up": _group(name="up", n=32),
+                           "down": _group(name="down", n=128, k=32)}}
+        self.local_ids = {0: list(range(8))}
+        self.maps = {0: SlotMap(resident, swap)}
+        S = len(resident) + swap
+        self.bufs = {0: {p: torch.zeros(S, *w.shape[1:]) for p, w in W.items()}}
+        for s, e in enumerate(resident):
+            for p, w in W.items():
+                self.bufs[0][p][s] = w[e]
+        self.resolved = []
+
+    def resolve(self, layer, ids):
+        self.resolved.append(list(ids))
+        slots, misses = self.maps[layer].resolve(list(ids))
+        for e, s in misses:
+            for p, w in self.W.items():
+                self.bufs[layer][p][s] = w[e]
+        return torch.tensor(slots, dtype=torch.int32)
+
+
+def _gemv_indexed_cpu(qtype, w_stack, x, slots, out):
+    out.copy_(torch.stack([w_stack[s] @ x[i] for i, s in enumerate(slots.tolist())]))
+
+
+def test_decode_counts_each_resident_once_with_many_misses(monkeypatch):
+    # S17-8: residents were repeated in every block of misses, so with more
+    # misses than swap slots a resident expert was summed several times
+    import pynference.moe as moe_mod
+    monkeypatch.setattr(moe_mod, "gemv_indexed", _gemv_indexed_cpu)
+    g = torch.Generator().manual_seed(3)
+    W = {"gate": torch.randn(8, 32, 128, generator=g) * 0.1,
+         "up": torch.randn(8, 32, 128, generator=g) * 0.1,
+         "down": torch.randn(8, 128, 32, generator=g) * 0.1}
+    bias = torch.zeros(8)
+    bias[0] = 10.0                                  # expert 0 (resident) always picked
+    store = _SlotStore(W, resident=[0], swap=1)     # X = 1: 3 misses -> 3 blocks
+    m = MoE(store, 0, top_k=4, router_w=torch.randn(8, 128, generator=g) * 0.1,
+            router_bias=bias)
+    for t in range(4):
+        x = torch.randn(128, generator=g)
+        w, idx = topk_weights(m._logits(x.reshape(1, -1)), 4)
+        ref = sum(wt * (W["down"][e] @ swiglu(W["gate"][e] @ x, W["up"][e] @ x))
+                  for wt, e in zip(w[0].tolist(), idx[0].tolist()))
+        store.resolved.clear()
+        y = m.decode(x)
+        assert len(store.resolved) == 3              # [0, miss], [miss], [miss]
+        assert sum(ids.count(0) for ids in store.resolved) == 1
+        torch.testing.assert_close(y, ref, rtol=1e-5, atol=1e-6)
+
+
 # ------------------------------------------------------------- bench seed guards
 
 def _load_bench():

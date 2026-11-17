@@ -135,6 +135,24 @@ def test_zero_budget_batches_misses_and_matches_full(tp):
     assert _rel(y0, _reference(_swiglu_np)) < REL_TOL
 
 
+def test_partial_residency_more_misses_than_slots_matches_full(tp):
+    # S17-8: with residents AND more misses than swap slots, decode repeated
+    # the residents in every miss block (a resident summed 2-3 times); zero
+    # budget (above) has no residents and could not see it
+    st, m = _moe(tp, 2 * _triple_bytes(), swap=1)
+    _, mf = _moe(tp, NE * _triple_bytes())
+    dev = tp.device
+    res = st.maps[0].resident
+    multi = 0
+    for t in range(T):
+        x = torch.from_numpy(TOKENS[t]).to(dev)
+        _, idx = torch.topk(m._logits(x.reshape(1, -1))[0], TOPK)
+        ids = idx.tolist()
+        multi += any(e in res for e in ids) and sum(e not in res for e in ids) > 1
+        assert _rel(m.decode(x), mf.decode(x)) < 1e-5, t
+    assert multi > 0, "no token exercised residents + >1 miss with 1 swap slot"
+
+
 def test_swap_pools_pin_rows_on_demand(tp):
     # S17 (jobs S17-4/6): eager HostPool pinned ~7 GB per rank at load, and
     # lazy whole-pool pinning on the first miss still fed the host OOM
