@@ -92,4 +92,44 @@ q35:199; residuo FFN q35:203.
 
 ## Piano TP e memoria
 
-(aggiunta nel passo 4)
+Due rank (convenzioni 3.4). DeltaNet: la testa valore j usa la chiave
+j mod 16 (Mappa A.12), che non separa le teste in blocchi contigui.
+Soluzione: il rank r prende le teste di parità r (j mod 2 = r) e il load le
+raccoglie in blocco contiguo (gather di righe/colonne dei soli pesi, nessuna
+nuova API); dentro il rank la regola diventa 24→8 teste con **j mod 8**.
+Attention e FFN: taglio contiguo. Nessuna comunicazione tra rank nei layer
+DeltaNet fuori da `ssm_out`.
+
+### Taglio per tensore
+
+| Tensore | Come si divide | Per rank |
+| --- | --- | --- |
+| `attn_qkv` [5120,10240] | righe per teste di parità (permute al load) | [5120] = q1024\|k1024\|v3072 |
+| `attn_gate` [5120,6144], `ssm_conv1d` [4,10240] | seguono v e qkv (stessa permute) | [3072], [4,5120] |
+| `ssm_out` [6144,5120] | colonne d'ingresso (v, permute) + `all_reduce` | [3072,5120] |
+| `ssm_a`, `ssm_dt.bias` [48]; `ssm_alpha`, `ssm_beta` [5120,48] | per teste valore di parità | [24], [5120,24] |
+| `ssm_norm` [128], `attn_q_norm`/`attn_k_norm` [256], tutte le RMS | replicati | — |
+| `attn_q` [5120,12288] | 12 teste query contigue; q+gate interlacciati (Mappa B.2): righe 0..6143 al rank 0 | [6144] |
+| `attn_k`, `attn_v` [5120,1024] | 2 teste KV contigue (kv=h/6 resta locale) | [512] |
+| `attn_output` [6144,5120] | colonne d'ingresso (teste 0..11) + `all_reduce` | [3072,5120] |
+| `ffn_gate`/`ffn_up` [5120,17408] | righe, 8704 = 34×256 | [5120,8704] |
+| `ffn_down` [17408,5120] | colonne d'ingresso + `all_reduce` | [8704,5120] |
+| `token_embd` [5120,248320] | vocabolo diviso 124160/rank: lookup con maschera + `all_reduce`; logits `all_gather` (tied, una copia) | 124160 righe |
+
+Niente bias (Mappe A/B). K-cut (3.4, blocco Q8_0 = 32): 3072 e 8704 multipli
+di 32 ✓ (8704 anche di 256); i tagli per teste stanno sull'asse d'uscita o
+su tensori F32, quindi non toccano i blocchi.
+
+### Memoria per GPU (Arc Pro B70, 31,89 GiB)
+
+| Voce | Per rank |
+| --- | --- |
+| Pesi Q8_0+F32 ÷2 (64 layer + embedding; MTP non caricato, D4) | ~13,4 GiB |
+| KV f16: 16 layer × 2 KV × 256 × (K+V) = 32 KiB × ctx | 0,26 GiB @8K; 2,1 @64K; 8,4 @262144 |
+| Stato DeltaNet f32: 48 × 128·128·24 + conv 3·5120 | ~78 MiB |
+| Attivazioni fp32 + logits 248320 (`all_gather`) | ~1 MiB + scratch |
+| Totale @64K | ~15,7 GiB; contesto pieno 262144 ≈ 22 GiB ✓ |
+
+Per token: ~128 `all_reduce` (48 `ssm_out` + 16 `attn_output` + 64
+`ffn_down`) ≈ 4,6 ms a ~36 µs (3.1); pesi per rank ~13,4 GiB ÷ 568 GB/s ≈
+25 ms + KV → decode TP ~30 ms/token (~30 tok/s), in linea con 3.9.
