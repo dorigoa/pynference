@@ -22,6 +22,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-m", "--model", required=True)
     ap.add_argument("--steps", type=int, default=32)
+    ap.add_argument("--ctx", type=int, default=2048,
+                    help="max_ctx for the model (C9 measures with --ctx 8192)")
     ap.add_argument("--mode", choices=["torch", "fused", "graph"], default="fused",
                     help="decode path: plain torch ops, fused Triton kernels, or fused + XPUGraph")
     ap.add_argument("--no-profile", action="store_true")
@@ -29,7 +31,7 @@ def main():
     tp = TP()
     g = GGUFFile(args.model)
     tok = Tokenizer(g)
-    model = load_model(g, tp, max_ctx=2048)
+    model = load_model(g, tp, max_ctx=args.ctx)
     model.fast_decode = args.mode != "torch"
     model.use_graph = args.mode == "graph"
     ids = tok.encode("The quick brown fox jumps over the lazy dog. " * 4)
@@ -51,6 +53,14 @@ def main():
     wall = run(args.steps)
     if tp.is_main:
         print(f"\n[{args.mode}] wall time per token: {wall * 1e3:.1f} ms ({1 / wall:.2f} tok/s)", flush=True)
+    store = getattr(model, "store", None)   # MoE models only (C5): hit rate drives decode speed
+    if store is not None:
+        st = store.stats()
+        res = sum(m.R for m in store.maps.values())
+        tot = sum(m.S for m in store.maps.values())
+        if tp.is_main:
+            print(f"store: hits {st['hits']} misses {st['misses']} "
+                  f"copied {st['bytes'] / 2**30:.2f} GiB; resident {res}/{tot} slots", flush=True)
     if args.no_profile:
         tp.close()
         return
