@@ -119,6 +119,84 @@ def norm_rope(x, w, eps, cos=None, sin=None, pos=None, out=None, slot=None):
     return out
 
 
+# ---------------------------------------------------------------- bias + RoPE (no norm) + KV store
+@triton.jit
+def _bias_rope_k(X, B, COS, SIN, POS, OUT, SLOT, D,
+                 stride_xt, stride_xh, stride_ot, stride_oh, SCALE,
+                 HALF: tl.constexpr, HAS_SLOT: tl.constexpr, BLOCK_D: tl.constexpr):
+    """gpt-oss decode head op (S18): x + bias, NEOX RoPE on the first 2*HALF dims,
+    times a score scale, store. No norm anywhere (gpt-oss has no q/k/v norms)."""
+    t = tl.program_id(0)
+    h = tl.program_id(1)
+    d = tl.arange(0, BLOCK_D)
+    m = d < D
+    base = X + t * stride_xt + h * stride_xh
+    x = tl.load(base + d, mask=m, other=0.0).to(tl.float32) + tl.load(B + h * D + d, mask=m, other=0.0)
+    if HALF > 0:
+        rot = d < 2 * HALF
+        p = tl.where(d < HALF, d + HALF, d - HALF)
+        xp = tl.load(base + p, mask=rot, other=0.0).to(tl.float32) + tl.load(B + h * D + p, mask=rot, other=0.0)
+        pos = tl.load(POS + t)
+        i = d % HALF
+        cs = tl.load(COS + pos * HALF + i, mask=rot, other=1.0)
+        sn = tl.load(SIN + pos * HALF + i, mask=rot, other=0.0)
+        sgn = tl.where(d < HALF, -1.0, 1.0)
+        x = tl.where(rot, x * cs + sgn * xp * sn, x)
+    x = x * SCALE
+    row = t
+    if HAS_SLOT:
+        row = tl.load(SLOT + t)
+    tl.store(OUT + row * stride_ot + h * stride_oh + d, x, mask=m)
+
+
+def bias_rope(x, bias, cos=None, sin=None, pos=None, scale=1.0, out=None, slot=None):
+    """x [T, H, D] (strided view ok): + bias [H, D], NEOX RoPE on the first
+    2*cos.shape[1] dims at positions pos [T] (skip rope if cos is None), * scale.
+    Writes to out [T, H, D], or into a KV cache out [H, S, D] at rows slot [T].
+    gpt-oss decode (S18): q gets the attention score scale (kernels.attn_decode
+    scores at 1.0), k/v stay at 1.0; sinks are unscaled, they are logits."""
+    T, H, D = x.shape
+    if out is None:
+        out = torch.empty(T, H, D, dtype=torch.float32, device=x.device)
+    if slot is None:
+        so_t, so_h = out.stride(0), out.stride(1)
+    else:
+        so_t, so_h = out.stride(1), out.stride(0)
+    half = cos.shape[1] if cos is not None else 0
+    _bias_rope_k[(T, H)](x, bias, cos if half else x, sin if half else x,
+                         pos if half else x, out, slot if slot is not None else x, D,
+                         x.stride(0), x.stride(1), so_t, so_h, scale,
+                         HALF=half, HAS_SLOT=slot is not None,
+                         BLOCK_D=_np2(D), num_warps=4)
+    return out
+
+
+# ---------------------------------------------------------------- GPT-OSS swiglu_oai
+@triton.jit
+def _swiglu_oai_k(G, U, Y, N, stride_g, stride_u, stride_y, alpha, limit, BLOCK: tl.constexpr):
+    """y = min(g, limit) * sigmoid(alpha * min(g, limit)) * (clamp(u, +-limit) + 1)."""
+    row = tl.program_id(0)
+    c = tl.program_id(1) * BLOCK + tl.arange(0, BLOCK)
+    m = c < N
+    g = tl.load(G + row * stride_g + c, mask=m, other=0.0)
+    u = tl.load(U + row * stride_u + c, mask=m, other=0.0)
+    g = tl.minimum(g, limit)
+    u = tl.minimum(tl.maximum(u, -limit), limit)
+    tl.store(Y + row * stride_y + c, g * tl.sigmoid(alpha * g) * (u + 1.0), mask=m)
+
+
+def swiglu_oai(g: torch.Tensor, u: torch.Tensor, out: torch.Tensor | None = None,
+               alpha: float = 1.702, limit: float = 7.0) -> torch.Tensor:
+    """MoE decode activation (gpt-oss): replaces the torch swiglu_oai chain
+    (moe.swiglu_oai is the CPU reference), S18."""
+    M, N = g.shape
+    out = torch.empty(M, N, dtype=torch.float32, device=g.device) if out is None else out
+    _swiglu_oai_k[(M, triton.cdiv(N, 1024))](g, u, out, N, g.stride(0), u.stride(0),
+                                             out.stride(0), alpha, limit,
+                                             BLOCK=1024, num_warps=4)
+    return out
+
+
 # ---------------------------------------------------------------- GELU(tanh)(gate) * up
 @triton.jit
 def _gelu_mul_k(GU, Y, F, BLOCK: tl.constexpr):
@@ -261,6 +339,28 @@ def _selftest():
     norm_rope(xq, wq, eps, cos, sin, pos, out=cache, slot=slot)
     print("norm_rope→kv  ", (cache[:, slot].transpose(0, 1).float() - ref).abs().max().item())
     print("norm (no rope)", (norm_rope(xq, None, eps) - ref_rms(xq, None)).abs().max().item())
+
+    # bias_rope (gpt-oss, S18): no norm, bias + NEOX rope + score scale
+    for T, H, D, scale in [(3, 4, 64, 0.125), (1, 32, 64, 1.0 / 8.0)]:   # small + gpt-oss rank slice
+        qkv = torch.randn(T, H * D, device=dev) * 2
+        xq2 = qkv.view(T, H, D)
+        bq = torch.randn(H, D, device=dev)
+        cos2, sin2 = rope_table(D, 500000.0, None, 64, dev)
+        pos2 = torch.tensor([5, 17, 40][:T], device=dev)
+        ref = rope_neox(xq2 + bq, cos2[pos2], sin2[pos2]) * scale
+        got = bias_rope(xq2, bq, cos2, sin2, pos2, scale)
+        print(f"bias_rope T={T} H={H} D={D}", (got - ref).abs().max().item())
+        cache2 = torch.zeros(H, 64, D, dtype=torch.float16, device=dev)
+        slot2 = torch.tensor([9, 3, 60][:T], device=dev)
+        bias_rope(xq2, bq, None, None, None, 1.0, out=cache2, slot=slot2)
+        print("bias_rope->kv", (cache2[:, slot2].transpose(0, 1).float() - (xq2 + bq)).abs().max().item())
+
+    from .moe import swiglu_oai as swiglu_oai_ref
+    for M, N in [(2, 100), (4, 2880)]:                     # small + gpt-oss expert rows
+        gg = torch.randn(M, N, device=dev) * 4
+        uu = torch.randn(M, N, device=dev) * 4
+        oo = torch.empty(M, N, dtype=torch.float32, device=dev)
+        print(f"swiglu_oai {M}x{N}", (swiglu_oai(gg, uu, out=oo) - swiglu_oai_ref(gg, uu)).abs().max().item())
 
     gu = torch.randn(2, 2 * 10752, device=dev) * 3
     import torch.nn.functional as F

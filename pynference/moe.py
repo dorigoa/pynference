@@ -400,10 +400,11 @@ class ExpertStore:
         self.hits = self.misses = 0
         self.bytes_copied = 0
 
-    def resolve(self, layer: int, ids: list[int]) -> torch.Tensor:
-        """Device int32 slots for local expert ids (valid for every
-        projection of the layer). Missing experts are copied in first; the
-        ids arrive on the host because decode does its top-k there (C5)."""
+    def resolve_host(self, layer: int, ids: list[int]) -> list[int]:
+        """Same as resolve(), but the slots stay on the host (S18): the
+        segmented-graph glue writes them into its own pinned staging buffer
+        and one async H2D feeds the static device tensor the graph reads,
+        instead of a fresh device tensor per layer."""
         local = self.local_ids[layer]
         for e in ids:
             if e not in local:
@@ -414,7 +415,14 @@ class ExpertStore:
             self.misses += len(misses)
             self.bytes_copied += self.triple_bytes[layer] * len(misses)
             self._copy_misses(layer, misses)
-        return torch.tensor(slots, dtype=torch.int32, device=self.tp.device)
+        return slots
+
+    def resolve(self, layer: int, ids: list[int]) -> torch.Tensor:
+        """Device int32 slots for local expert ids (valid for every
+        projection of the layer). Missing experts are copied in first; the
+        ids arrive on the host because decode does its top-k there (C5)."""
+        return torch.tensor(self.resolve_host(layer, ids),
+                            dtype=torch.int32, device=self.tp.device)
 
     def _ensure_ring(self) -> None:
         """Allocate the pinned staging ring on the first swap miss (so
@@ -558,45 +566,113 @@ class MoE:
         gate, up, down = self.shared
         return down(self.act(gate(x), up(x)))
 
-    def decode(self, x: torch.Tensor) -> torch.Tensor:
-        """One token: x [1, k] (or [k]) f32 -> [k] f32 summed over ranks."""
-        x = x.reshape(1, self.k)
-        dev = x.device
-        w, idx = topk_weights(self._logits(x), self.top_k, self.routing)
-        ids, w = idx[0].tolist(), w[0].tolist()  # one host sync (C5)
-        y = torch.zeros(self.k, dtype=torch.float32, device=dev)
+    # ---- graph-friendly decode pieces (S18) ----
+    def _init_decode_bufs(self, dev) -> None:
+        """Static decode buffers for the segmented graph: fixed-shape rows
+        (always top_k expert rows; padded rows read slot 0 with weight 0, so
+        they cost bandwidth but add nothing) at fixed addresses, so each layer
+        segment can be captured once and replayed. y accumulates across the
+        resolve batches of one token; the reduce and the residual live in the
+        neighbouring segments (see decode_body)."""
+        if getattr(self, "_d", None) is not None:
+            return
+        Lm = self.top_k
+        f32 = torch.float32
+
+        def host(t):  # pinned on GPU so one async H2D feeds the device twins
+            return t.pin_memory() if torch.device(dev).type == "xpu" else t
+
+        self._d = {
+            "xrep": torch.zeros(Lm, self.k, dtype=f32, device=dev),
+            "g": torch.zeros(Lm, self.ffn, dtype=f32, device=dev),
+            "u": torch.zeros(Lm, self.ffn, dtype=f32, device=dev),
+            "a": torch.zeros(Lm, self.ffn, dtype=f32, device=dev),
+            "d": torch.zeros(Lm, self.k, dtype=f32, device=dev),
+            "y": torch.zeros(self.k, dtype=f32, device=dev),
+            "slots": torch.zeros(Lm, dtype=torch.int32, device=dev),
+            "wts": torch.zeros(Lm, dtype=f32, device=dev),
+            "ei": torch.zeros(Lm, dtype=torch.long, device=dev),
+        }
+        self._dh = {n: host(torch.zeros(Lm, dtype=self._d[n].dtype))
+                    for n in ("slots", "wts", "ei")}
+        self._batches: list[list[tuple[int, float]]] = [[]]
+
+    def decode_route(self, logits: torch.Tensor) -> tuple[list[int], list[float]]:
+        """The one host sync per MoE layer (C5): top-k on the device, chosen
+        experts on the host, so resolve can run there."""
+        w, idx = topk_weights(logits, self.top_k, self.routing)
+        return idx[0].tolist(), w[0].tolist()
+
+    def decode_fill(self, ids: list[int], w: list[float]) -> int:
+        """Routing -> resolve batches, host side. Residents ride once with the
+        first X misses, further misses in blocks of X (S17-8 fix). Returns the
+        number of decode_body runs the driver must do, always >= 1: an empty
+        batch runs the body on zero weights and adds nothing."""
         m = self.store.maps[self.layer]
         X = m.S - m.R  # swap slots: fresh misses allowed per resolve
         sel = [(e, wt) for e, wt in zip(ids, w) if e in self.local]
         res = [p for p in sel if p[0] in m.resident]
         mis = [p for p in sel if p[0] not in m.resident]
         step = max(X, 1)
-        # residents ride once, with the first X misses; further misses follow in
-        # blocks of X. (Until S17-8 every block repeated the residents, so with
-        # more misses than swap slots a resident expert was summed 2-3 times.)
-        batches = [res + mis[:step]] + [mis[i:i + step] for i in range(step, len(mis), step)]
-        for b in batches:
-            if not b:
-                continue
-            slots = self.store.resolve(self.layer, [e for e, _ in b])
-            L = len(b)
-            xrep = x.repeat(L, 1)  # same token for each expert, [L, k]
-            g = torch.empty(L, self.ffn, dtype=torch.float32, device=dev)
-            u = torch.empty(L, self.ffn, dtype=torch.float32, device=dev)
-            gemv_indexed(self.gate.qtype, self.store.bufs[self.layer]["gate"], xrep, slots, g)
-            gemv_indexed(self.up.qtype, self.store.bufs[self.layer]["up"], xrep, slots, u)
-            if self.eb is not None:  # per-expert bias, indexed by global id
-                ei = torch.tensor([e for e, _ in b], dtype=torch.long, device=dev)
-                g += self.eb[0][ei]
-                u += self.eb[1][ei]
-            a = self.act(g, u).contiguous()
-            d = torch.empty(L, self.k, dtype=torch.float32, device=dev)
-            gemv_indexed(self.down.qtype, self.store.bufs[self.layer]["down"], a, slots, d)
-            if self.eb is not None:
-                d += self.eb[2][ei]
-            wts = torch.tensor([wt for _, wt in b], dtype=torch.float32, device=dev)
-            y += (d * wts[:, None]).sum(0)
-        y = self.tp.all_reduce(y)
+        batches = [b for b in ([res + mis[:step]] +
+                               [mis[i:i + step] for i in range(step, len(mis), step)]) if b]
+        self._batches = batches or [[]]
+        return len(self._batches)
+
+    def decode_fill_batch(self, bi: int) -> None:
+        """Resolve batch bi (misses staged on the side stream, S17 ring), then
+        fill the static top_k-row slots/weights/expert-id tensors through one
+        pinned staging copy each; the captured segment reads only those."""
+        b = self._batches[bi]
+        slots = self.store.resolve_host(self.layer, [e for e, _ in b])
+        L = len(b)
+        self._dh["slots"][:L].copy_(torch.tensor(slots, dtype=torch.int32))
+        self._dh["slots"][L:].zero_()
+        self._dh["wts"][:L].copy_(torch.tensor([wt for _, wt in b], dtype=torch.float32))
+        self._dh["wts"][L:].zero_()
+        self._dh["ei"][:L].copy_(torch.tensor([e for e, _ in b], dtype=torch.long))
+        self._dh["ei"][L:].zero_()
+        for n in ("slots", "wts", "ei"):
+            self._d[n].copy_(self._dh[n], non_blocking=True)
+
+    def decode_body(self, x: torch.Tensor) -> torch.Tensor:
+        """One resolve batch over the static buffers: indexed GEMVs (gate, up,
+        down) + per-expert biases + swiglu_oai, weighted-summed into y. No
+        zeroing (the driver zeroes once per layer so several batches
+        accumulate) and no all_reduce/residual — those live in the neighbour
+        segments, so every rank replays the same collective count whatever its
+        batch count is (S18 graph, C5). Returns y [k]."""
+        d = self._d
+        d["xrep"].copy_(x.reshape(1, self.k).expand(self.top_k, -1))
+        bufs = self.store.bufs[self.layer]
+        gemv_indexed(self.gate.qtype, bufs["gate"], d["xrep"], d["slots"], d["g"])
+        gemv_indexed(self.up.qtype, bufs["up"], d["xrep"], d["slots"], d["u"])
+        if self.eb is not None:  # per-expert bias, indexed by global id
+            d["g"] += self.eb[0][d["ei"]]
+            d["u"] += self.eb[1][d["ei"]]
+        if torch.device(x.device).type == "xpu":
+            from . import kernels as K   # Triton at call time only: header note
+            K.swiglu_oai(d["g"], d["u"], out=d["a"])
+        else:
+            d["a"].copy_(self.act(d["g"], d["u"]))
+        gemv_indexed(self.down.qtype, bufs["down"], d["a"], d["slots"], d["d"])
+        if self.eb is not None:
+            d["d"] += self.eb[2][d["ei"]]
+        d["y"] += (d["d"] * d["wts"][:, None]).sum(0)
+        return d["y"]
+
+    def decode(self, x: torch.Tensor) -> torch.Tensor:
+        """One token: x [1, k] (or [k]) f32 -> [k] f32 summed over ranks.
+        Eager driver over the graph pieces (S18): the same bodies, no capture."""
+        x = x.reshape(1, self.k)
+        self._init_decode_bufs(x.device)
+        ids, w = self.decode_route(self._logits(x))
+        nb = self.decode_fill(ids, w)
+        self._d["y"].zero_()
+        for bi in range(nb):
+            self.decode_fill_batch(bi)
+            self.decode_body(x)
+        y = self.tp.all_reduce(self._d["y"])
         if self.shared is not None:  # replicated: add once, after the reduce
             y = y + self._shared_out(x)[0]
         return y

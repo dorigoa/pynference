@@ -327,13 +327,17 @@ class _SlotStore:
                 self.bufs[0][p][s] = w[e]
         self.resolved = []
 
-    def resolve(self, layer, ids):
+    def resolve_host(self, layer, ids):
+        # the real ExpertStore.resolve_host (S18): slots stay on the host
         self.resolved.append(list(ids))
         slots, misses = self.maps[layer].resolve(list(ids))
         for e, s in misses:
             for p, w in self.W.items():
                 self.bufs[layer][p][s] = w[e]
-        return torch.tensor(slots, dtype=torch.int32)
+        return slots
+
+    def resolve(self, layer, ids):
+        return torch.tensor(self.resolve_host(layer, ids), dtype=torch.int32)
 
 
 def _gemv_indexed_cpu(qtype, w_stack, x, slots, out):

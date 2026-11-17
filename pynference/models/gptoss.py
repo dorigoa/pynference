@@ -630,6 +630,170 @@ class GPTOss:
             o = o + L.o_bias
         return tp.all_reduce(o)
 
+    # ---- segmented decode (S18): graph-friendly bodies ----
+    # The token path becomes 74 small graphs: G0 (embed + first norm), one
+    # segment A[il] per layer (previous MoE reduce + attention block + post
+    # norm + router logits), one MoE body B[il] per layer, and GF (final
+    # reduce + head + gather). The host step between A and B is the one C5
+    # sync per layer; every segment replays with fixed shapes and the B bodies
+    # hold no collectives, so the collective count per token is the same on
+    # every rank whatever the per-rank resolve-batch count is (no hang, C5).
+    def _init_decode(self) -> None:
+        """Static buffers (S18): pinned token/pos -> device twins the graphs
+        read, _x (residual stream) / _h / _hm [1, n_embd], plus the fixed
+        row buffers of every MoE layer."""
+        if getattr(self, "_x", None) is not None:
+            return
+        c, dev = self.cfg, self.tp.device
+        host = torch.zeros(2, dtype=torch.long)
+        self._host = host.pin_memory() if torch.device(dev).type == "xpu" else host
+        self._dbuf = torch.zeros(2, dtype=torch.long, device=dev)
+        self._ids, self._pos = self._dbuf[0:1], self._dbuf[1:2]
+        self._x = torch.zeros(1, c.n_embd, dtype=torch.float32, device=dev)
+        self._h = torch.zeros_like(self._x)
+        self._hm = torch.zeros_like(self._x)
+        for m in self.moe:
+            m._init_decode_bufs(dev)
+
+    def _embed_body(self) -> None:
+        """Segment G0: embedding lookup (+ its all-reduce) and the layer-0
+        attention norm, read from the device twins of token/pos."""
+        self._x.copy_(self.embed_tokens(self._ids))
+        self._h.copy_(rms_norm(self._x, self.layers[0].attn_norm, self.cfg.eps))
+
+    def _attn_decode_body(self, il: int) -> torch.Tensor:
+        """Attention block, decode, fused (S18): QKV GEMV, then bias + NEOX
+        RoPE (+ the attention score scale on q, kernels.attn_decode scores at
+        1.0) in one Triton kernel that also stores k/v straight into the KV
+        cache, then attn_decode with sinks, then O + bias (rank 0). Reads
+        _h; returns the [1, n_embd] all-reduce partial (caller reduces)."""
+        from .. import kernels as K   # Triton at call time only: header note
+        c, L = self.cfg, self.layers[il]
+        Hq, Hkv, D = self.n_head_l, self.n_kv_l, c.head_dim
+        b = L.qkv_bias
+        qkv = L.qkv(self._h)
+        if torch.device(self._h.device).type == "xpu":
+            kc, vc = self.cache[il]
+            if L.swa:
+                slot = torch.remainder(self._pos, c.window)
+                n_len = torch.clamp(self._pos + 1, max=c.window)
+                split, nsp = self._split_swa, self._nsp_swa
+            else:
+                slot, n_len = self._pos, self._pos + 1
+                split, nsp = self._split_full, self._nsp_full
+            v3 = qkv.view(1, Hq + 2 * Hkv, D)
+            q = K.bias_rope(v3[:, :Hq], b[:Hq * D].view(Hq, D),
+                            self.cos, self.sin, self._pos, scale=self._scale)
+            K.bias_rope(v3[:, Hq:Hq + Hkv], b[Hq * D:(Hq + Hkv) * D].view(Hkv, D),
+                        self.cos, self.sin, self._pos, out=kc, slot=slot)
+            K.bias_rope(v3[:, Hq + Hkv:], b[(Hq + Hkv) * D:].view(Hkv, D),
+                        out=vc, slot=slot)
+            a = K.attn_decode(q.view(Hq, D), kc, vc, n_len, nsp, split, sinks=L.sinks)
+        else:
+            # CPU tests stub _attention_decode (Triton cannot run here): the
+            # torch twin of the fused body feeds the same stub as before S18.
+            q = rope_neox(qkv[:, :Hq * D].view(1, Hq, D) + b[:Hq * D].view(Hq, D),
+                          self.cos[self._pos], self.sin[self._pos])
+            k = rope_neox(qkv[:, Hq * D:(Hq + Hkv) * D].view(1, Hkv, D)
+                          + b[Hq * D:(Hq + Hkv) * D].view(Hkv, D),
+                          self.cos[self._pos], self.sin[self._pos])
+            v = qkv[:, (Hq + Hkv) * D:].view(1, Hkv, D) + b[(Hq + Hkv) * D:].view(Hkv, D)
+            a = self._attention_decode(il, q, k, v, self._pos)
+        o = L.o(a.view(1, Hq * D))
+        if L.o_bias is not None:
+            o = o + L.o_bias
+        return o
+
+    def _layer_body(self, il: int) -> torch.Tensor:
+        """Segment A[il]: the all-reduced MoE output of layer il-1 into the
+        residual and the attention norm (il > 0), the attention block, the
+        post-attention norm, the router logits (returned: the driver reads
+        them on the host after the replay), and the zeroing of layer il's MoE
+        accumulator. Reads/writes only the static buffers."""
+        c, L = self.cfg, self.layers[il]
+        if il > 0:
+            y = self.moe[il - 1]._d["y"]
+            self.tp.all_reduce(y)
+            self._x.add_(y.view(1, -1))
+            self._h.copy_(rms_norm(self._x, L.attn_norm, c.eps))
+        o = self._attn_decode_body(il)
+        self.tp.all_reduce(o)
+        self._x.add_(o)
+        self._hm.copy_(rms_norm(self._x, L.post_attn_norm, c.eps))
+        lg = self.moe[il]._logits(self._hm)
+        self.moe[il]._d["y"].zero_()
+        return lg
+
+    def _final_body(self) -> torch.Tensor:
+        """Segment GF: the last layer's MoE reduce + residual, the output
+        norm, the vocab-split head and its gather: [1, n_vocab]."""
+        y = self.moe[-1]._d["y"]
+        self.tp.all_reduce(y)
+        self._x.add_(y.view(1, -1))
+        return self.tp.all_gather(self.lm_head(rms_norm(self._x, self.output_norm, self.cfg.eps)))
+
+    def _run_layers_eager(self) -> None:
+        """A[il] then the resolve-batch B[il] replays, layer after layer,
+        with the host routing step between (the driver of the graph; the
+        eager fused path runs the same bodies without capturing)."""
+        for il in range(self.cfg.n_layer):
+            lg = self._layer_body(il)
+            m = self.moe[il]
+            nb = m.decode_fill(*m.decode_route(lg))
+            for bi in range(nb):
+                m.decode_fill_batch(bi)
+                m.decode_body(self._hm)
+
+    def _decode_eager(self) -> torch.Tensor:
+        """Fused eager driver: G0 + layers + GF, no graph (S18)."""
+        self._embed_body()
+        self._run_layers_eager()
+        return self._final_body()[0]
+
+    def _decode_graph(self) -> torch.Tensor:
+        """Replay of the 74 captured graphs (S18): one host sync per layer
+        between A[il] and its B[il] segments, all MoE reduces inside the
+        following segment."""
+        self._g0.replay()
+        for il in range(self.cfg.n_layer):
+            self._ga[il].replay()
+            m = self.moe[il]
+            nb = m.decode_fill(*m.decode_route(self._lg[il]))
+            for bi in range(nb):
+                m.decode_fill_batch(bi)
+                self._gb[il].replay()
+        self._gf.replay()
+        return self._graph_out[0]
+
+    def _capture(self) -> None:
+        """Capture the segmented decode (plan 3.2): warm up the whole path
+        twice on a side stream so every kernel has run once, then capture
+        each segment on its own. The saved router logits and final logits are
+        pool tensors: fixed addresses across replays."""
+        dev = self.tp.device
+        s = torch.xpu.Stream(dev)
+        s.wait_stream(torch.xpu.current_stream())
+        with torch.xpu.stream(s):
+            for _ in range(2):
+                self._decode_eager()
+            torch.xpu.current_stream().wait_stream(s)
+        torch.xpu.synchronize(dev)
+        self._g0 = torch.xpu.XPUGraph()
+        with torch.xpu.graph(self._g0):
+            self._embed_body()
+        self._ga = [torch.xpu.XPUGraph() for _ in self.layers]
+        self._gb = [torch.xpu.XPUGraph() for _ in self.layers]
+        self._lg = [None] * len(self.layers)
+        for il in range(len(self.layers)):
+            with torch.xpu.graph(self._ga[il]):
+                self._lg[il] = self._layer_body(il)
+            with torch.xpu.graph(self._gb[il]):
+                self.moe[il].decode_body(self._hm)
+        self._gf = torch.xpu.XPUGraph()
+        with torch.xpu.graph(self._gf):
+            self._graph_out = self._final_body()
+        torch.xpu.synchronize(dev)
+
     def embed_tokens(self, ids: torch.Tensor) -> torch.Tensor:
         """Embedding rows, [T] -> [T, n_embd] float32 (no sqrt scaling, openai-moe.cpp)."""
         local = (ids >= self.v0) & (ids < self.v1)
@@ -677,22 +841,26 @@ class GPTOss:
 
     @torch.inference_mode()
     def decode(self, token: int) -> torch.Tensor:
-        """One generated token: logits [n_vocab] float32 on every rank. No XPUGraph
-        yet (fast_decode uses the fused Triton attention kernel; the graph comes in S18)."""
-        c, dev = self.cfg, self.tp.device
+        """One generated token: logits [n_vocab] float32 on every rank.
+        S18: token/pos go to the device through one pinned pair, then either
+        the segmented XPUGraph replays (use_graph) or its eager twin runs."""
         if self.n_past >= self.max_ctx:
             raise ValueError(f"context full ({self.n_past} >= {self.max_ctx})")
-        pos = torch.tensor([self.n_past], dtype=torch.long, device=dev)
-        x = self.embed_tokens(torch.tensor([token], dtype=torch.long, device=dev))
-        for il in range(c.n_layer):
-            x = x + self._layer_attn_decode(il, x, pos)
-            h = rms_norm(x, self.layers[il].post_attn_norm, c.eps)
-            x = x + self.moe[il].decode(h).view(1, -1)   # MoE.decode -> [k] summed
+        self._init_decode()
+        self._host[0] = token
+        self._host[1] = self.n_past
+        self._dbuf.copy_(self._host, non_blocking=True)
         self.n_past += 1
+        if self.use_graph:
+            if getattr(self, "_g0", None) is None:
+                self._capture()
+            out = self._decode_graph()
+        else:
+            out = self._decode_eager()
         self._diag_n += 1
         if self._diag_n % 8 == 0:
             self._memdiag(f"decode{self._diag_n}")
-        return self.logits(x)[0]
+        return out
 
     def memory_report(self) -> dict:
         """Bytes on this GPU (C3): dense weights (incl. router/biases and the rope

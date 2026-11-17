@@ -58,8 +58,28 @@ class _MoE:
     def prefill(self, x):
         return x @ self.W.T
 
-    def decode(self, x):
-        return (x @ self.W.T)[0]          # real MoE.decode returns [k]
+    # S18 graph-piece decode API (mirrors pynference.moe.MoE): the driver
+    # reads _logits on the host, then runs decode_body per resolve batch,
+    # accumulating _d["y"]. One "expert" carrying the whole [k] output keeps
+    # the stub equivalent to its prefill twin (x @ W.T).
+    def _logits(self, x):
+        return torch.zeros(1, 1, dtype=torch.float32, device=x.device)
+
+    def _init_decode_bufs(self, dev):
+        self._d = {"y": torch.zeros(self.W.shape[0], dtype=torch.float32, device=dev)}
+
+    def decode_route(self, logits):
+        return [0], [1.0]
+
+    def decode_fill(self, ids, w):
+        return 1
+
+    def decode_fill_batch(self, bi):
+        pass
+
+    def decode_body(self, x):
+        self._d["y"] += (x @ self.W.T).reshape(-1)
+        return self._d["y"]
 
 
 def _fake_attention_decode(self, il, q, k, v, pos):
