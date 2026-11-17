@@ -1,0 +1,32 @@
+== start 20:50:13
+== baseline meminfo:
+MemAvailable:   60679692 kB
+GPUActive:          4176 kB
+== pytest tests/gpu (20:50:13)
+== pytest gpu exit 0 (20:53:55)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+116 passed, 1 skipped, 1 warning in 221.01s (0:03:41)
+== regress gpt-oss-120b (20:53:55)
+== regress gpt-oss exit 0 (20:58:06)
+== regress gpt-oss-120b: ppl 20:55:36
+== ppl exit 0 (20:58:06)
+Final estimate: PPL = 1.6095 +/- 0.04047  (2040 scored tokens, 110.7s)
+chat-it: max |dp| 2.61e-04 over top-10
+chat-en: max |dp| 1.26e-04 over top-10
+code: max |dp| 3.45e-05 over top-10
+raw: max |dp| 6.98e-05 over top-10
+ppl: baseline 1.6095, now 1.6095, rel diff 0.000%
+PASS
+PASS
+== regress gemma4 (20:58:06)
+== regress gemma4 exit 0 (20:59:41)
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+-- oom lines (job safety net):
+== summary: pytest=0 regress_gptoss=0 regress_gemma4=0
+== end 20:59:41
