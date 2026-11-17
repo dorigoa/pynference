@@ -1,0 +1,70 @@
+== start 17:44:02
+== baseline meminfo (Strata fermo, GPU fredde):
+MemAvailable:   60687856 kB
+GPUActive:          3548 kB
+== probe A: one process, no oneCCL (17:44:02)
+P0 pre-alloc                    gpu_active    0.00 GiB reserved   0.00 allocated   0.00
+P0 single 8x1GiB                gpu_active    8.07 GiB reserved   8.00 allocated   8.00
+P0 single 8x1GiB freed          gpu_active    1.07 GiB reserved   1.00 allocated   1.00
+P0 single 512x16MiB             gpu_active    8.07 GiB reserved   8.00 allocated   8.00
+P0 single 512x16MiB freed       gpu_active    0.09 GiB reserved   0.02 allocated   0.02
+P0 single 64x128MiB             gpu_active    8.09 GiB reserved   8.02 allocated   8.00
+P0 single 64x128MiB freed       gpu_active    0.20 GiB reserved   0.12 allocated   0.12
+== probe B: two processes with oneCCL (17:44:07)
+ModuleNotFoundError: No module named 'pynference'
+ModuleNotFoundError: No module named 'pynference'
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 384, in wrapper
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+== meminfo after probes:
+MemAvailable:   60142236 kB
+GPUActive:          3688 kB
+== decode_profile fused --ctx 8192 --steps 32 (17:44:09)
+== decode_profile exit 0 (17:46:02)
+  MoE: 128 experts x 36 layers, budget 17.14 GB (dense 1.34, kv 0.15, scratch 1.07)
+  MoE: 1224 of 2304 local experts resident, 72 swap slots, store 17.13 GB, pinned 0.00 GB
+  gpt-oss: load done in 31.5s
+[fused] wall time per token: 286.0 ms (3.50 tok/s)
+store: hits 2480 misses 1376 copied 16.94 GiB; resident 1224/1296 slots
+GPU kernel time per token: 365.2 ms
+-- top kernels (ms/token):
+kernel                                                        ms/token  calls/token
+aten::copy_                                                      63.28         1578
+record_param_comms                                               62.69           83
+oneccl_allreduce_pcie<float, Rt64_128_PCIE, false, 16, RingT     62.60           82
+xccl:all_reduce                                                  62.60           82
+Memcpy H2D (Host (Driver Allocated) -> Device)                   59.71          188
+_dequant_kernel                                                  19.14          226
+_gemv_indexed_kernel                                              8.26          108
+gemm_kernel                                                       3.98          285
+aten::mm                                                          3.93          276
+aten::mul                                                         1.96          985
+_q8_gemv                                                          1.89           73
+at::native::xpu::ElementwiseGlobalRangeKernel<at::native::xp      1.50          492
+at::native::xpu::UnrolledElementwiseKernel<at::native::xpu::      1.08          312
+at::native::xpu::UnrolledElementwiseKernel<at::native::xpu::      0.94          226
+aten::add                                                         0.89          860
+aten::topk                                                        0.80           40
+at::native::xpu::UnrolledElementwiseKernel<at::native::xpu::      0.68           10
+aten::index                                                       0.53          266
+at::native::xpu::VectorizedElementwiseKernel<4, at::native::      0.52          637
+Memcpy M2D (Host (User Allocated) -> Device)                      0.46          336
+at::native::xpu::SegmentedGroupRadixSortPairsFunctor<at::nat      0.44           40
+at::native::xpu::SegmentedGroupRadixSelectPairsFunctor<at::n      0.35           40
+aten::mean                                                        0.34           82
+at::native::xpu::ReduceKernel<1, at::native::xpu::ReduceOp<f      0.34           82
+at::native::xpu::VectorizedElementwiseKernel<4, at::native::      0.33          182
+-- profile tail:
+Memcpy M2D (Host (User Allocated) -> Device)                      0.46          336
+at::native::xpu::SegmentedGroupRadixSortPairsFunctor<at::nat      0.44           40
+at::native::xpu::SegmentedGroupRadixSelectPairsFunctor<at::n      0.35           40
+aten::mean                                                        0.34           82
+at::native::xpu::ReduceKernel<1, at::native::xpu::ReduceOp<f      0.34           82
+at::native::xpu::VectorizedElementwiseKernel<4, at::native::      0.33          182
+-- kernel oom lines (job safety net):
+== summary: profile=0
+== end 17:46:03
