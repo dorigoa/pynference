@@ -1343,7 +1343,8 @@ rispetta C8.
 **Requisiti.** Job GPU: 2–3.
 
 **Leggi.** C5, C9; 3.2 (XPUGraph); le API di `kernels.py`, `moe.py`,
-`gptoss.py` (con `grep -n "def "`).
+`gptoss.py` (con `grep -n "def "`); in `reports/S17.md` le note "Per S18" e
+"Determinismo".
 
 **Puoi modificare.** `pynference/models/gptoss.py`, `pynference/moe.py`,
 `pynference/kernels.py`, `pynference/quant/**`, `bench/decode_profile.py`,
@@ -1352,6 +1353,15 @@ rispetta C8.
 **Passi.**
 
 1. Profilo di partenza (job): `decode_profile.py` con profilo per kernel.
+   Nello stesso job, la RAM bloccata dal driver: il nostro processo blocca
+   RAM dell'host quasi pari alla VRAM che torch riserva (`GPUActive` in
+   `/proc/meminfo` ≈ 40 GiB con ~20 GiB per GPU, S17-6), mentre Strata con
+   ~30 GiB di VRAM per GPU ne blocca 7 GiB. È questo che limita gli esperti
+   residenti al ~54% (`EXPERT_HOST_RESERVE_BYTES`) e costa ~440 MB di copie
+   per GPU a ogni token (2,7–3,1 token/s in S17, llama.cpp 49–54). Misura
+   `GPUActive` su allocazioni di prova (un processo senza oneCCL e due con,
+   buffer grandi e piccoli); se trovi la causa, alza il budget degli
+   esperti prima del passo 2.
 2. Kernel fusi per norme, RoPE YaRN e attention con sinks; grafo per i
    segmenti tra due sincronizzazioni.
 3. GEMV indicizzata MXFP4: banda e configurazioni.
