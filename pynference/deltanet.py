@@ -277,3 +277,96 @@ def decode(x_new, conv_state, w, g, beta, state, n_key_heads, qk_eps=1e-6):
         y, g, beta, state, out, n_key_heads, S, qk_eps, S ** -0.5,
         BLOCK_S=_np2(S), num_warps=8)
     return out
+
+
+# ----------------------------------------------------------------- prefill kernel
+@triton.jit
+def _conv_prefill_k(X, ST, STN, W, Y, T, C, stride_x, stride_st, stride_stn,
+                    K: tl.constexpr, BLOCK_C: tl.constexpr, BLOCK_T: tl.constexpr):
+    """Causal depthwise conv + SiLU over a token chunk, grid over channel/token blocks.
+
+    X/Y: [T, C]; W: [C, K]. ST: [K-1, C] is read-only (programs across token
+    blocks would race on an in-place shift); the K-1 newest rows of the
+    padded input go to STN, written only by the `pid_t == 0` programs.
+    """
+    cb = tl.program_id(0) * BLOCK_C + tl.arange(0, BLOCK_C)
+    tb = tl.program_id(1) * BLOCK_T + tl.arange(0, BLOCK_T)
+    mc = cb < C
+    acc = tl.zeros([BLOCK_T, BLOCK_C], dtype=tl.float32)
+    for i in tl.static_range(K):
+        r = tb + i                                     # row of the padded input
+        h = tl.load(ST + r[:, None] * stride_st + cb[None, :],
+                    mask=(r < K - 1)[:, None] & mc[None, :], other=0.0)
+        xv = tl.load(X + (r - (K - 1))[:, None] * stride_x + cb[None, :],
+                     mask=(r >= K - 1)[:, None] & mc[None, :], other=0.0)
+        acc += (h + xv) * tl.load(W + cb[None, :] * K + i, mask=mc[None, :], other=0.0)
+    y = acc * tl.sigmoid(acc)
+    tl.store(Y + tb[:, None] * C + cb[None, :], y, mask=(tb < T)[:, None] & mc[None, :])
+    if tl.program_id(1) == 0:
+        for u in tl.static_range(K - 1):
+            r = T + u
+            hv = tl.load(ST + r * stride_st + cb, mask=(r < K - 1) & mc, other=0.0)
+            xv = tl.load(X + (r - (K - 1)) * stride_x + cb, mask=(r >= K - 1) & mc, other=0.0)
+            tl.store(STN + u * stride_stn + cb, hv + xv, mask=mc)
+
+
+@triton.jit
+def _delta_prefill_k(Y, G, BETA, ST, OUT, T, H_K, S, eps, scale,
+                     stride_y, stride_g, stride_out, BLOCK_S: tl.constexpr):
+    """Gated delta rule over a chunk: sequential in t, one program per value head.
+
+    The head's whole [S, S] state stays in registers across the t loop and is
+    written back in place (single writer per head). Y: [T, C] post-conv rows
+    split q | k | v; G/BETA: [T, H_v]; OUT: [T, H_v, S]. Same per-token math
+    as `_delta_decode_k`.
+    """
+    h = tl.program_id(0)
+    km = h % H_K
+    s = tl.arange(0, BLOCK_S)
+    m = s < S
+    ii = tl.arange(0, BLOCK_S)[:, None]
+    m2 = (ii < S) & (s[None, :] < S)
+    base = ST + h * S * S + ii * S + s[None, :]
+    M = tl.load(base, mask=m2, other=0.0)
+    q0 = km * S
+    k0 = (H_K + km) * S
+    v0 = (2 * H_K + h) * S
+    for t in range(T):
+        q = tl.load(Y + t * stride_y + q0 + s, mask=m, other=0.0)
+        k = tl.load(Y + t * stride_y + k0 + s, mask=m, other=0.0)
+        v = tl.load(Y + t * stride_y + v0 + s, mask=m, other=0.0)
+        q = q * tl.rsqrt(tl.sum(q * q, 0) + eps)
+        k = k * tl.rsqrt(tl.sum(k * k, 0) + eps)
+        M = M * tl.exp(tl.load(G + t * stride_g + h))
+        delta = (v - tl.sum(M * k[:, None], 0)) * tl.load(BETA + t * stride_g + h)
+        M = M + k[:, None] * delta[None, :]
+        tl.store(OUT + t * stride_out + h * S + s,
+                 tl.sum(M * q[:, None], 0) * scale, mask=m)
+    tl.store(base, M, mask=m2)
+
+
+def prefill(x, conv_state, w, g, beta, state, n_key_heads, qk_eps=1e-6):
+    """A token chunk through conv+SiLU and the gated delta rule (Triton, f32).
+
+    x [T, C] raw conv input (the qkv rows); conv_state [K-1, C] and
+    state [H_v, S, S] are updated **in place** (the conv result is staged in
+    a second buffer, since ST is read-only in the conv kernel); w [C, K];
+    g/beta [T, H_v]. Returns the raw delta output [T, H_v, S] scaled by
+    1/sqrt(S), same per-token semantics as `decode`.
+    """
+    T, C = x.shape
+    H_v, S, S2 = state.shape
+    assert S == S2
+    y = torch.empty(T, C, dtype=torch.float32, device=x.device)
+    new_hist = torch.empty_like(conv_state)
+    _conv_prefill_k[(triton.cdiv(C, 256), triton.cdiv(T, 32))](
+        x, conv_state, new_hist, w, y, T, C,
+        x.stride(0), conv_state.stride(0), new_hist.stride(0),
+        K=w.shape[1], BLOCK_C=256, BLOCK_T=32, num_warps=4)
+    conv_state.copy_(new_hist)
+    out = torch.empty(T, H_v, S, dtype=torch.float32, device=x.device)
+    _delta_prefill_k[(H_v,)](
+        y, g, beta, state, out, T, n_key_heads, S, qk_eps, S ** -0.5,
+        y.stride(0), g.stride(0), out.stride(0),
+        BLOCK_S=_np2(S), num_warps=8)
+    return out

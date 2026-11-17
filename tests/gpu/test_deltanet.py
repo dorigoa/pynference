@@ -97,6 +97,52 @@ def test_decode_rank_shapes():
     _decode_case(4, **RANK, tag="d rank")
 
 
+# ------------------------------------------------------------------ prefill
+def _prefill_case(seed, H_k, H_v, S, T, K=4, tag=""):
+    x, hist, w, g, beta, state = _random_inputs(seed, T, H_k, H_v, S, K)
+    ref = _ref_pipeline(x, hist, w, g, beta, state, H_k, S)
+    hist_g = hist.to(DEV).clone()
+    state_g = state.to(DEV).clone()
+    out = deltanet.prefill(x.to(DEV), hist_g, w.to(DEV), g.to(DEV),
+                           beta.to(DEV), state_g, H_k)
+    _check(out, state_g, hist_g, ref, tag or f"p {H_k}/{H_v}/{S}/{T}/{K}")
+
+
+def test_prefill_small():
+    _prefill_case(10, 2, 4, 16, 8, tag="p small")
+
+
+def test_prefill_small_k2():
+    _prefill_case(11, 2, 3, 16, 5, K=2, tag="p K=2")
+
+
+def test_prefill_full_shapes():
+    _prefill_case(12, T=16, **FULL, tag="p full")
+
+
+def test_prefill_rank_shapes():
+    _prefill_case(13, T=12, **RANK, tag="p rank")
+
+
+def test_prefill_then_decode():
+    # chunked prefill: kernel prefill of T1 tokens then kernel decode of T2
+    # tokens must match the f64 reference over the whole sequence (S21 path)
+    H_k, H_v, S, T1, T2 = 2, 4, 32, 5, 3
+    x, hist, w, g, beta, state = _random_inputs(14, T1 + T2, H_k, H_v, S)
+    ref = _ref_pipeline(x, hist, w, g, beta, state, H_k, S)
+    hist_g = hist.to(DEV)
+    state_g = state.to(DEV)
+    out_p = deltanet.prefill(x[:T1].to(DEV), hist_g, w.to(DEV), g[:T1].to(DEV),
+                             beta[:T1].to(DEV), state_g, H_k)
+    assert _cos(out_p.cpu(), ref[0]) >= TOL_COS_OUT, "p1 out"
+    for t in range(T1, T1 + T2):
+        out = deltanet.decode(x[t].to(DEV), hist_g, w.to(DEV), g[t].to(DEV),
+                              beta[t].to(DEV), state_g, H_k)
+        assert _cos(out.cpu(), ref[0][t]) >= TOL_COS_OUT, f"d2 out t={t}"
+    assert _rel_err(state_g.cpu(), ref[1]) <= TOL_REL_STATE, "chunked state"
+    torch.testing.assert_close(hist_g.cpu(), ref[2].float(), rtol=0, atol=0)
+
+
 def test_decode_matches_ref_step_by_step():
     # consecutive decode calls must equal the prefill reference prefix by prefix
     H_k, H_v, S, T = 2, 5, 32, 6

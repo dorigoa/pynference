@@ -20,13 +20,20 @@ FULL = dict(H_k=16, H_v=48, S=128)
 RANK = dict(H_k=8, H_v=24, S=128)   # per-rank shapes after the parity split
 
 
+def _gen(rng):
+    # local generator only: the global torch RNG must stay untouched, the
+    # later test files in the suite depend on the state they inherit.
+    return torch.Generator().manual_seed(int(rng.integers(1 << 31)))
+
+
 def _randoms(rng, T, H_k, H_v, S, dtype):
-    q = deltanet.l2norm_qk(torch.randn(T, H_k, S, dtype=dtype), 1e-6)
-    k = deltanet.l2norm_qk(torch.randn(T, H_k, S, dtype=dtype), 1e-6)
-    v = torch.randn(T, H_v, S, dtype=dtype)
-    g = -torch.rand(T, H_v, dtype=dtype) * 2.0          # decay exp(g) in (e^-2, 1]
-    beta = torch.rand(T, H_v, dtype=dtype)              # sigmoid output range
-    state = torch.randn(H_v, S, S, dtype=dtype)
+    gen = _gen(rng)
+    q = deltanet.l2norm_qk(torch.randn(T, H_k, S, dtype=dtype, generator=gen), 1e-6)
+    k = deltanet.l2norm_qk(torch.randn(T, H_k, S, dtype=dtype, generator=gen), 1e-6)
+    v = torch.randn(T, H_v, S, dtype=dtype, generator=gen)
+    g = -torch.rand(T, H_v, dtype=dtype, generator=gen) * 2.0   # decay exp(g) in (e^-2, 1]
+    beta = torch.rand(T, H_v, dtype=dtype, generator=gen)       # sigmoid output range
+    state = torch.randn(H_v, S, S, dtype=dtype, generator=gen)
     return q, k, v, g, beta, state
 
 
