@@ -1,0 +1,51 @@
+== start 08:58:20
+== pytest gpu exit 0 (09:01:03)
+tests/gpu/test_moe_layer.py::test_decode_swiglu_oai_vs_cpu_reference
+  /home/alvise/pynference/tests/gpu/test_moe_layer.py:87: RuntimeWarning: overflow encountered in exp
+    return g / (1.0 + np.exp(-alpha * g)) * (u + 1.0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+108 passed, 1 skipped, 1 warning in 161.70s (0:02:41)
+== ours exit 1 (09:02:18)
+---------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-11-17_09:02:15
+  host      : ubuntu
+  rank      : 1 (local_rank: 1)
+  exitcode  : -9 (pid: 2685604)  (SIGKILL)
+  error_file: <N/A>
+  traceback : Signal 9 (SIGKILL) received by PID 2685604
+=========================================================
+== diff strict exit 1 (09:02:18)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/results/jobs/S17-2/run_bench.py", line 12, in <module>
+    mod.main()
+    ~~~~~~~~^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 192, in main
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S17-2/ours.json'
+== ppl exit 1 (09:03:24)
+  exitcode  : -9 (pid: 2686830)  (SIGKILL)
+  error_file: <N/A>
+  traceback : Signal 9 (SIGKILL) received by PID 2686830
+=========================================================
+PPL_EXTRACT_FAIL
+== ppl compare exit 3 (09:03:24)
+== something failed: layer dump for step 4, n-cpu-moe 34 (09:03:24)
+dump: 49780 lines in results/jobs/S17-2/dump.txt
+== dump exit 0 (09:04:06)
+common_debug_cb_eval:               attn_out-0 = (f32)        ADD(node_29{2880, 5, 1, 1}, blk.0.attn_output.bias{2880, 1, 1, 1}}) = {2880, 5, 1, 1}
+common_debug_cb_eval:              attn_norm-1 = (f32)        MUL(norm-1{2880, 5, 1, 1}, blk.1.attn_norm.weight{2880, 1, 1, 1}}) = {2880, 5, 1, 1}
+-- ffn headers present:
+
+== no ffn header: retry dump with n-cpu-moe 30 (09:04:06)
+dump: 49780 lines in results/jobs/S17-2/dump30.txt
+== dump30 exit 0 (09:04:27)
+
+== summary: pytest=0 ours=1 diff=1 ppl=1 pplcmp=3
+== end 09:04:27

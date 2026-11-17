@@ -279,7 +279,8 @@ class ExpertStore:
     misses and copied bytes.
     """
 
-    def __init__(self, g, tp, budget_bytes: int, swap_slots: int = 2):
+    def __init__(self, g, tp, budget_bytes: int, swap_slots: int = 2,
+                 verbose: bool = False):
         groups = list(getattr(g, "groups", g))
         if not groups:
             raise ValueError("ExpertStore: no expert groups")
@@ -321,6 +322,11 @@ class ExpertStore:
             bufs = {}
             for name, gr in self.layers[layer].items():
                 rb = row_bytes(gr.qtype, gr.k)
+                if verbose:
+                    m = self.maps[layer]
+                    print(f"  store: layer {layer} {name}: {m.R} resident + "
+                          f"{m.S - m.R} swap slots -> "
+                          f"{m.S * gr.n * rb / 1e6:.0f} MB", flush=True)
                 buf = torch.empty(self.maps[layer].S, gr.n, rb,
                                   dtype=torch.uint8, device=tp.device)
                 if resident:

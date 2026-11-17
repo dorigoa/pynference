@@ -19,6 +19,7 @@ norms replicated.
 """
 from __future__ import annotations
 
+import gc
 import math
 import os
 import time
@@ -337,7 +338,7 @@ class GPTOss:
         Expert budget per GPU (D8): the per-rank VRAM budget minus dense
         weights, KV cache and a scratch allowance (bf16 dequant buffers for
         the prefill path + chunk-sized attention transients)."""
-        from ..moe import ExpertStore, MoE   # lazy import (module header note)
+        from ..moe import MoE   # lazy import (module header note)
         c, tp, dev = self.cfg, self.tp, self.tp.device
         groups = moe_expert_groups(self.g)
         n_exp = int(self.g.get("expert_count", groups[0].n_experts))
@@ -362,7 +363,7 @@ class GPTOss:
             print(f"  MoE: {n_exp} experts x {c.n_layer} layers, budget "
                   f"{budget / 1e9:.2f} GB (dense {dense / 1e9:.2f}, kv {kv / 1e9:.2f}, "
                   f"scratch {scratch / 1e9:.2f})", flush=True)
-        store = ExpertStore(groups, tp, budget)
+        store = self._expert_store_ladder(groups, tp, budget)
         moe = [MoE(store, il, top_k=top_k, router_w=router[il][0],
                    router_bias=router[il][1], activation="swiglu_oai",
                    routing="logits", expert_bias=biases[il])
@@ -375,6 +376,36 @@ class GPTOss:
                   f"store {store.memory_bytes() / 1e9:.2f} GB, "
                   f"pinned {store.pinned_bytes() / 1e9:.2f} GB", flush=True)
         return store, moe
+
+    # Expert-store budget ladder (S17, job S17-2): plan D8 is a capacity
+    # measured on an idle GPU (S1); with dense weights loaded, the Xe page
+    # tables and hundreds of store buffers the usable bytes are a few GB
+    # lower, and an OutOfMemoryError inside the store build is not
+    # recoverable per-buffer. So: drop the budget a step and rebuild — same
+    # residency plan, fewer resident experts, more pinned RAM (C5-checked).
+    EXPERT_BUDGET_MIN_GB = 8.0
+
+    def _expert_store(self, groups, tp, budget):
+        from ..moe import ExpertStore   # lazy import (module header note)
+        return ExpertStore(groups, tp, budget, verbose=True)
+
+    def _expert_store_ladder(self, groups, tp, budget):
+        b, floor = budget, int(self.EXPERT_BUDGET_MIN_GB * 1e9)
+        while b >= floor:
+            try:
+                return self._expert_store(groups, tp, b)
+            except torch.OutOfMemoryError:
+                gc.collect()
+                if torch.device(tp.device).type == "xpu":
+                    torch.xpu.empty_cache()
+                nb = int(b * 0.9)
+                if nb < floor:
+                    raise
+                if tp.is_main:
+                    print(f"  MoE: store OOM at {b / 1e9:.2f} GB, "
+                          f"retry {nb / 1e9:.2f} GB", flush=True)
+                b = nb
+        raise RuntimeError(f"expert budget {budget / 1e9:.2f} GB below floor")
 
     # ---- KV cache ----
     def reset(self):

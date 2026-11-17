@@ -201,3 +201,30 @@ def test_memory_report_keys():
     swa_layers = sum(1 for L in m.layers if L.swa)
     want = (swa_layers * window + (n_layer - swa_layers) * max_ctx) * nkv * D * 4 * 2
     assert r["cache"] == want
+
+
+def test_expert_store_ladder_retries_on_oom(monkeypatch):
+    """S17-2 OOM fix: each OutOfMemoryError drops the budget 10% and retries."""
+    calls = []
+
+    def fake_store(self, groups, tp, budget):
+        calls.append(budget)
+        if len(calls) < 3:
+            raise torch.OutOfMemoryError("simulated store OOM")
+        return f"store@{budget}"
+
+    monkeypatch.setattr(GPTOss, "_expert_store", fake_store)
+    m = _stub(seed=29)
+    got = m._expert_store_ladder(None, m.tp, 20_000_000_000)
+    assert calls == [20_000_000_000, 18_000_000_000, 16_200_000_000]
+    assert got == f"store@{16_200_000_000}"
+
+
+def test_expert_store_ladder_gives_up_below_floor(monkeypatch):
+    def always_oom(self, groups, tp, budget):
+        raise torch.OutOfMemoryError("no room at all")
+
+    monkeypatch.setattr(GPTOss, "_expert_store", always_oom)
+    m = _stub(seed=31)
+    with pytest.raises(torch.OutOfMemoryError):
+        m._expert_store_ladder(None, m.tp, 9e9)
