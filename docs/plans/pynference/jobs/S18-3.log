@@ -1,0 +1,68 @@
+== start 20:18:47
+== baseline meminfo:
+MemAvailable:   60710600 kB
+GPUActive:          3700 kB
+== gemv microbench (20:18:47)
+== gemv microbench exit 0 (20:19:03)
+E=1 BEST BN=4 BK=512 W=8 48.7 GB/s (84.2 us)
+E=2 BEST BN=4 BK=512 W=8 119.9 GB/s (68.5 us)
+E=4 BEST BN=8 BK=256 W=4 128.1 GB/s (128.2 us)
+AUTOTUNE-PICK BN=4 BK=512 W=8
+-- best lines per E:
+E=1 BEST BN=4 BK=512 W=8 48.7 GB/s (84.2 us)
+E=2 BEST BN=4 BK=512 W=8 119.9 GB/s (68.5 us)
+E=4 BEST BN=8 BK=256 W=4 128.1 GB/s (128.2 us)
+-- full table tail:
+E=4 BN= 2 BK= 512 W= 4     154.4 us   106.3 GB/s
+E=4 BN= 4 BK= 512 W= 8     131.4 us   124.9 GB/s
+E=4 BN= 8 BK= 256 W= 8     148.1 us   110.9 GB/s
+E=4 BN=16 BK= 256 W= 8     234.0 us    70.1 GB/s
+E=4 BN=32 BK=1024 W=16     896.8 us    18.3 GB/s
+E=4 BN= 2 BK=4096 W= 4    1685.3 us     9.7 GB/s
+E=4 BEST BN=8 BK=256 W=4 128.1 GB/s (128.2 us)
+AUTOTUNE-PICK BN=4 BK=512 W=8
+== pytest tests/gpu (20:19:03)
+== pytest gpu exit 1 (20:30:29)
+FAILED tests/gpu/test_moe_layer.py::test_zero_budget_batches_misses_and_matches_full
+FAILED tests/gpu/test_moe_layer.py::test_prefill_matches_decode_and_reference
+3 failed, 113 passed, 1 skipped, 1 warning in 684.51s (0:11:24)
+FAILED tests/gpu/test_moe_layer.py::test_decode_vs_cpu_reference - AssertionE...
+FAILED tests/gpu/test_moe_layer.py::test_zero_budget_batches_misses_and_matches_full
+FAILED tests/gpu/test_moe_layer.py::test_prefill_matches_decode_and_reference
+== decode graph short ctx 8192 (20:30:29)
+== graph short exit 0 (20:31:47)
+  MoE: 128 experts x 36 layers, budget 17.14 GB (dense 1.34, kv 0.15, scratch 1.07)
+  MoE: 1224 of 2304 local experts resident, 72 swap slots, store 17.13 GB, pinned 0.00 GB
+  gpt-oss: load done in 28.8s
+[graph] prefill 41 tokens: 126.214 ms/token (8 token/s)
+[graph] wall time per token: 258.3 ms (3.87 tok/s)
+store: hits 2636 misses 1382 copied 17.01 GiB; resident 1224/1296 slots
+== decode graph prompt 2000 tok (20:31:47)
+== graph long exit 0 (20:33:18)
+  gpt-oss: load done in 28.0s
+[graph] prefill 2000 tokens: 5.000 ms/token (200 token/s)
+[graph] wall time per token: 237.6 ms (4.21 tok/s)
+store: hits 4296 misses 3466 copied 42.67 GiB; resident 1224/1296 slots
+== regress gpt-oss-120b (20:33:18)
+== regress gpt-oss exit 0 (20:37:24)
+== regress gpt-oss-120b: ppl 20:34:55
+== ppl exit 0 (20:37:24)
+Final estimate: PPL = 1.6095 +/- 0.04047  (2040 scored tokens, 109.9s)
+chat-it: max |dp| 2.61e-04 over top-10
+chat-en: max |dp| 1.26e-04 over top-10
+code: max |dp| 3.45e-05 over top-10
+raw: max |dp| 6.98e-05 over top-10
+ppl: baseline 1.6095, now 1.6095, rel diff 0.000%
+PASS
+PASS
+== regress gemma4 (20:37:24)
+== regress gemma4 exit 0 (20:39:06)
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+-- oom lines (job safety net):
+== summary: gemv=0 pytest=1 graph_short=0 graph_long=0 regress_gptoss=0 regress_gemma4=0
+== end 20:39:06
