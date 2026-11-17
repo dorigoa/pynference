@@ -1,0 +1,101 @@
+== start 11:56:48
+== baseline meminfo (Strata fermo, GPU fredde):
+MemTotal:       63655308 kB
+MemAvailable:   60571168 kB
+GPUActive:          3840 kB
+== pytest gpu exit 0 (11:59:31)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+109 passed, 1 skipped, 1 warning in 162.01s (0:02:42)
+== ours exit 0 (12:01:14)
+  MoE: 128 experts x 36 layers, budget 17.27 GB (dense 1.34, kv 0.02, scratch 1.07)
+  MoE: 1234 of 2304 local experts resident, 72 swap slots, store 17.26 GB, pinned 0.00 GB
+  gpt-oss: load done in 28.1s
+/home/alvise/pynference/pynference/moe.py:443: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:208.)
+  stage.copy_(torch.from_numpy(gr.expert_bytes(e)))
+/home/alvise/pynference/pynference/moe.py:443: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:208.)
+  stage.copy_(torch.from_numpy(gr.expert_bytes(e)))
+chat-it: 'analysisWe need to Italian? The user wants answer in Italian language. The user '
+chat-en: 'analysisWe need to produce haiku. Use the channel.analysisWe need to write a ha'
+code: '    if n <= 0:\n        raise ValueError("Fibonacci number must be positive")\n   '
+raw: ' Augustus, the first Roman emperor, was crowned.\n\nThe Roman Empire\n\nThe Roman Em'
+-- kernel oom lines:
+JOURNAL_UNAVAILABLE
+-- memdiag lines (rank, phase, host avail, driver-held, torch, pinned):
+1794913202.790 rank1 pid2930772 load mem_avail=20.70GiB gpu_active=34.96GiB torch_alloc=17.42GiB torch_resv=17.44GiB store_pinned=0.00GiB
+1794913202.791 rank0 pid2930771 load mem_avail=20.84GiB gpu_active=34.96GiB torch_alloc=17.42GiB torch_resv=17.44GiB store_pinned=0.00GiB
+1794913219.281 rank0 pid2930771 prefill mem_avail=12.29GiB gpu_active=39.39GiB torch_alloc=19.13GiB torch_resv=19.15GiB store_pinned=0.02GiB
+1794913219.409 rank1 pid2930772 prefill mem_avail=12.31GiB gpu_active=39.39GiB torch_alloc=19.13GiB torch_resv=19.15GiB store_pinned=0.02GiB
+1794913231.376 rank0 pid2930771 decode8 mem_avail=13.76GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913231.376 rank1 pid2930772 decode8 mem_avail=13.76GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913236.083 rank0 pid2930771 decode16 mem_avail=16.88GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913236.085 rank1 pid2930772 decode16 mem_avail=16.88GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913238.246 rank1 pid2930772 decode24 mem_avail=17.13GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913238.247 rank0 pid2930771 decode24 mem_avail=17.13GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913245.393 rank0 pid2930771 prefill mem_avail=17.09GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913245.404 rank1 pid2930772 prefill mem_avail=17.08GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913247.526 rank1 pid2930772 decode32 mem_avail=17.24GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913247.526 rank0 pid2930771 decode32 mem_avail=17.24GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913249.217 rank1 pid2930772 decode40 mem_avail=17.22GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913249.222 rank0 pid2930771 decode40 mem_avail=17.22GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913250.702 rank0 pid2930771 decode48 mem_avail=17.16GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913250.702 rank1 pid2930772 decode48 mem_avail=17.16GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913253.550 rank0 pid2930771 prefill mem_avail=17.14GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913253.569 rank1 pid2930772 prefill mem_avail=17.14GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913255.555 rank1 pid2930772 decode56 mem_avail=17.17GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913255.563 rank0 pid2930771 decode56 mem_avail=17.17GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913257.871 rank1 pid2930772 decode64 mem_avail=17.20GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913257.874 rank0 pid2930771 decode64 mem_avail=17.20GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913259.416 rank1 pid2930772 decode72 mem_avail=17.19GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913259.420 rank0 pid2930771 decode72 mem_avail=17.19GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913261.799 rank0 pid2930771 prefill mem_avail=17.56GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913261.810 rank1 pid2930772 prefill mem_avail=17.56GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913263.174 rank1 pid2930772 decode80 mem_avail=17.56GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913263.175 rank0 pid2930771 decode80 mem_avail=17.56GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913264.624 rank1 pid2930772 decode88 mem_avail=17.55GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913264.625 rank0 pid2930771 decode88 mem_avail=17.55GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913265.870 rank1 pid2930772 decode96 mem_avail=17.54GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+1794913265.870 rank0 pid2930771 decode96 mem_avail=17.54GiB gpu_active=39.89GiB torch_alloc=19.14GiB torch_resv=19.40GiB store_pinned=0.02GiB
+-- mem.log gpu_active trend:
+meminfo avail_kb 60570360 gpu_active_kb 3840
+meminfo avail_kb 57111020 gpu_active_kb 457960
+meminfo avail_kb 56642328 gpu_active_kb 732264
+meminfo avail_kb 49660476 gpu_active_kb 8393448
+meminfo avail_kb 17909492 gpu_active_kb 41828256
+== diff strict exit 1 (12:01:14)
+code     same greedy tokens 12/24, max |dp| top-10 0.4902, mean partial KL 2.07e-01
+   ref:  '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+   ours: '    if n <= 0:\n        raise ValueError("Fibonacci number must be positive")\n    return fibonacci(n)'
+raw      same greedy tokens 1/24, max |dp| top-10 0.4524, mean partial KL 7.80e-01
+   ref:  ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+   ours: ' Augustus, the first Roman emperor, was crowned.\n\nThe Roman Empire\n\nThe Roman Empire was a period of'
+C8 FAIL: chat-it: greedy diverges at step 3 but the reference gap is 0.244 >= 0.15 (not a near-tie)
+C8 FAIL: chat-it: mean partial KL 7.58e-01 > 0.01
+C8 FAIL: chat-en: greedy diverges at step 6 but the reference gap is 0.426 >= 0.15 (not a near-tie)
+C8 FAIL: chat-en: mean partial KL 4.06e-01 > 0.01
+C8 FAIL: code: mean partial KL 2.07e-01 > 0.01
+C8 FAIL: raw: greedy diverges at step 1 but the reference gap is 0.257 >= 0.15 (not a near-tie)
+C8 FAIL: raw: mean partial KL 7.80e-01 > 0.01
+C8 FAIL: greedy-identical prompts: 0/4, 3 required
+C8 strict: FAIL
+== ppl exit 0 (12:03:51)
+  MoE: 128 experts x 36 layers, budget 17.28 GB (dense 1.34, kv 0.01, scratch 1.07)
+  MoE: 1235 of 2304 local experts resident, 72 swap slots, store 17.28 GB, pinned 0.00 GB
+  gpt-oss: load done in 29.0s
+/home/alvise/pynference/pynference/moe.py:443: UserWarning: The given NumPy array is not writable, and PyTorch does not support non-writable tensors. This means writing to this tensor will result in undefined behavior. You may want to copy the array to protect its data or make it writable before converting it to a tensor. This type of warning will be suppressed for the rest of this program. (Triggered internally at /__w/pytorch/pytorch/torch/csrc/utils/tensor_numpy.cpp:208.)
+  stage.copy_(torch.from_numpy(gr.expert_bytes(e)))
+[1]1.9336,[2]1.4534,[3]1.4536,[4]2.1071,[5]1.9316,[6]1.7471,[7]1.6271,[8]1.6127,
+Final estimate: PPL = 1.6127 +/- 0.04060  (2040 scored tokens, 114.9s)
+RES ppl ours 1.6127 ref 1.5995 rel 0.825% (limit 1%)
+== ppl compare exit 0 (12:03:51)
+== regress gemma4 exit 0 (12:05:50)
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== comparison off: layer dump, n-cpu-moe 34 (12:05:50)
+dump: 49780 lines in results/jobs/S17-7/dump.txt
+== dump exit 0 (12:06:31)
+== summary: pytest=0 ours=0 diff=1 ppl=0 pplcmp=0 gemma4=0
+== end 12:06:31
