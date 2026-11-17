@@ -14,7 +14,7 @@ import triton
 if not hasattr(torch, "xpu") or torch.xpu.device_count() == 0:
     pytest.skip("no XPU device available", allow_module_level=True)
 
-from pynference.kernels import add_norm, attn_decode, gelu_mul, norm_rope, rms_norm
+from pynference.kernels import add_norm, attn_decode, bias_rope, gelu_mul, norm_rope, rms_norm, swiglu_oai
 from pynference.models.gemma4 import rope_neox, rope_table
 
 DEV = torch.device("xpu", 0)
@@ -107,3 +107,39 @@ def test_attn_decode(Hq, Hkv, D, S, n):
     o = attn_decode(q, kc, vc, torch.tensor([n], device=DEV, dtype=torch.int32),
                     triton.cdiv(S, split), split)
     assert (o - ref).abs().max().item() < ATOL_ATTN
+
+
+def _bias_rope_case(T, H, D):
+    qkv = torch.randn(T, H * D, device=DEV) * 2
+    x = qkv.view(T, H, D)
+    b = torch.randn(H, D, device=DEV)
+    cos, sin = rope_table(D, 500000.0, None, 64, DEV)   # pos rows read by value
+    pos = torch.tensor([5, 17, 40][:T], device=DEV)
+    return x, b, cos, sin, pos
+
+
+@pytest.mark.parametrize("T,H,D", [(3, 4, 64), (1, 32, 64)])   # small + gpt-oss rank slice
+def test_bias_rope(T, H, D):
+    scale = 0.125                                             # 1/sqrt(64), gpt-oss score scale
+    x, b, cos, sin, pos = _bias_rope_case(T, H, D)
+    ref = rope_neox(x + b, cos[pos], sin[pos]) * scale
+    assert (bias_rope(x, b, cos, sin, pos, scale) - ref).abs().max().item() < ATOL_FP32
+
+
+@pytest.mark.parametrize("T,H,D", [(3, 4, 64), (1, 32, 64)])
+def test_bias_rope_to_kv_cache(T, H, D):
+    x, b, _, _, _ = _bias_rope_case(T, H, D)
+    cache = torch.zeros(H, 64, D, dtype=torch.float16, device=DEV)
+    slot = torch.tensor([9, 3, 60][:T], device=DEV)           # distinct: last write wins
+    bias_rope(x, b, None, None, None, 1.0, out=cache, slot=slot)
+    got = cache[:, slot].transpose(0, 1).float()
+    assert (got - (x + b)).abs().max().item() < ATOL_FP16_CACHE
+
+
+@pytest.mark.parametrize("M,N", [(2, 100), (4, 2880)])        # small + gpt-oss expert rows
+def test_swiglu_oai(M, N):
+    from pynference.moe import swiglu_oai as ref_fn
+    g = torch.randn(M, N, device=DEV) * 4
+    u = torch.randn(M, N, device=DEV) * 4
+    out = torch.empty(M, N, dtype=torch.float32, device=DEV)
+    assert (swiglu_oai(g, u, out=out) - ref_fn(g, u)).abs().max().item() < ATOL_FP32
