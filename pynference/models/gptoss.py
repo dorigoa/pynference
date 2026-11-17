@@ -554,7 +554,11 @@ class GPTOss:
             split, nsp = self._split_full, self._nsp_full
         kc.index_copy_(1, slot, k.transpose(0, 1).to(kc.dtype))
         vc.index_copy_(1, slot, v.transpose(0, 1).to(vc.dtype))
-        return K.attn_decode(q.reshape(Hq, D), kc, vc, n_len, nsp, split, sinks=L.sinks)
+        # kernels.attn_decode scores at scale 1.0 by design (gemma4 convention,
+        # see kernels._attn_decode_k): gpt-oss needs 1/sqrt(D), so scale q here.
+        # Sinks stay unscaled, they are logits added in the denominator.
+        return K.attn_decode((q * self._scale).reshape(Hq, D), kc, vc, n_len,
+                             nsp, split, sinks=L.sinks)
 
     # ---- full attention block = the llama.cpp "attn_out" (openai-moe.cpp:100-103) ----
     def _layer_attn(self, il: int, x: torch.Tensor, pos: torch.Tensor, pos0: int) -> torch.Tensor:

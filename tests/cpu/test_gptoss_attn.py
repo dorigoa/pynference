@@ -7,7 +7,9 @@ alphabetical, like the S15 TRITON_INTERPRET contract).
 
 Random data only: the weights/model checks are the GPU job of step 4.
 """
+import math
 import os
+import types
 
 os.environ["TRITON_INTERPRET"] = "1"
 
@@ -15,7 +17,7 @@ import numpy as np
 import torch
 
 from pynference import kernels
-from pynference.models.gptoss import attn_prefill
+from pynference.models.gptoss import GPTOss, attn_prefill
 
 
 def _ref_prefill(q, kc, vc, kp, pos, window, scale, sinks):
@@ -115,3 +117,38 @@ def test_attn_decode_ring_matches_prefill_window():
         kp = torch.tensor([(p - ((p - j) % W)) for j in range(W)])
         pre = attn_prefill(q[p:p + 1], kc, vc, kp, torch.tensor([p]), W, 1.0, sinks)
         torch.testing.assert_close(o.reshape(-1), pre[0], atol=2e-4, rtol=0)
+
+
+def test_model_decode_attention_matches_prefill_scale():
+    """C8 guard (S17): the real GPTOss._attention_decode must score with self._scale.
+
+    kernels.attn_decode scores at scale 1.0 by design (gemma4 convention), so the
+    model has to hand it q * _scale; the two kernel-vs-prefill tests above run both
+    sides at 1.0 and cannot see a lost scale in the model wiring. Here the model's
+    own decode method runs (on a stub with just the attributes it reads) against
+    attn_prefill with the model's own scale, same cache, same history, same sinks."""
+    torch.manual_seed(4)
+    Hq, Hkv, D, S, n = 4, 2, 16, 48, 23
+    scale = 1.0 / math.sqrt(D)
+    sinks = torch.randn(Hq) * 2.0
+    kc = (torch.randn(Hkv, S, D) * 0.5).half()
+    vc = torch.randn(Hkv, S, D)
+    kc[:, n - 1:] = 0.0                       # only slots 0..n-2 hold history
+    vc[:, n - 1:] = 0.0
+    q = torch.randn(1, Hq, D)
+    k = torch.randn(1, Hkv, D)
+    v = torch.randn(1, Hkv, D)
+    stub = types.SimpleNamespace(
+        cfg=types.SimpleNamespace(window=8),
+        layers={0: types.SimpleNamespace(swa=False, sinks=sinks)},
+        cache={0: (kc, vc)},
+        _split_full=S, _nsp_full=1, _scale=scale,
+    )
+    pos = torch.tensor([n - 1])
+    got = GPTOss._attention_decode(stub, 0, q, k, v, pos)
+    # the identical history through the prefill path the model uses for the prompt:
+    # keys 0..n-1 (index_copy_ above stored our k/v into slot n-1 in place), query n-1
+    kp = torch.full((S,), -1)
+    kp[:n] = torch.arange(n)
+    pre = attn_prefill(q, kc, vc, kp, pos, 0, scale, sinks)
+    torch.testing.assert_close(got.reshape(-1), pre[0], atol=2e-4, rtol=0)
