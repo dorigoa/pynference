@@ -48,9 +48,47 @@ Layer: `llm_build_delta_net_base::operator()` q35:145; ramo lineare q35:176
     llama-server → la mappatura da rispettare in S20/S21 è quella di
     llama.cpp (annotato in Deviazioni nel report S19).
 
-## Mappa B — layer attention e resto
+## Mappa B — layer attention (16+MTP, `!is_recr(il)`) e resto
 
-(aggiunta nel passo 3)
+Loop layer: ctor graph q35:144; `build_inp_mem_hybrid` (cache+mask causale)
+q35:156; RMSNorm `attn_norm` eps 1e-6 q35:168; ramo `build_layer_attn`
+q35:179; residuo "attn_residual" q35:188; `attn_post_norm` q35:195; FFN
+q35:199; residuo FFN q35:203.
+
+1. Proiezioni (q35:297-301): `attn_q` [5120,12288] con n_q=2·24·256
+   (`create_tensor_qkv` q35:72), `attn_k` [5120,1024], `attn_v` [5120,1024]
+   (4 KV × 256), niente bias.
+2. **QG interlacciato per testa**: la vista `Qcur` ha nb1=2·256 per testa
+   (q35:306-308; `ggml_view_3d` ha nb0=element-size di default, ggml.h:1509),
+   la vista `gate` ha offset +256 (q35:320-324). Testa h: q = righe
+   512h..512h+255 di `attn_q`, gate = righe 512h+256..512h+511. NON le
+   "seconde 6144 colonne" (nota del passo 1, corretta).
+3. Norme pre-RoPE su q e k per testa 256: RMS `attn_q_norm` [256] q35:312,
+   `attn_k_norm` [256] q35:317. V non normato.
+4. RoPE solo su Q,K (q35:330-331): `build_rope` → GGUF senza `rope.type`,
+   tipo derivato `use_mrope() ? MROPE : NEOX` con sezioni [11,11,10,0] ≠ 0
+   (llama-model.cpp:3838-3840) → `ggml_rope_multi` (llama-graph.cpp:1659-
+   1662). Kernel: MROPE ruota coppie stile NEOX (x_j, x_{j+32}) j=0..31 sui
+   primi 64 di 256 dim, canali 64..255 pass-through (ops.cpp:6337-6338,
+   6351-6361); base 1e7, sezioni M-RoPE 11+11+10=32 coppie. In testo le 3
+   posizioni coincidono → per pynference basta RoPE parziale 64/256.
+5. Attention (q35:338-342): scala 1/√256, mask causale; GQA 24Q/4KV con
+   testa kv = **h/6** contigua (`rk2=neq2/nek2=6`, `ik2=iq2/rk2`,
+   ops.cpp:8776,8834) — diversa da DeltaNet (j mod 16).
+6. Gate su uscita: `attn_out *= sigmoid(gate)` con gate 2D [6144,n_tokens]
+   (q35:324, 345-348); proj `attn_output` [6144,5120] (q35:72, mm 351).
+7. FFN dense (q35:494 → `build_ffn(LLM_FFN_SILU, LLM_FFN_PAR)`
+   llama-graph.cpp:1979): `down( silu(gate·x) ⊙ (up·x) )`; `ffn_gate`/
+   `ffn_up` [5120,17408], `ffn_down` [17408,5120], niente bias (q35:99-101).
+8. Testi residuali: `attn_post_norm` RMS [5120] prima della FFN (q35:195),
+   il residuo FFN riaggiunge il valore pre-norm (q35:192,203).
+9. Uscita modello: RMS `output_norm` (q35:214) → logits = `output` legato a
+   `token_embd` [5120,248320] DUPLICATED (q35:44,51-52; mm 237). No cls.
+10. MTP blk.64: caricato come blocco attention denso (q35:107-126, comment
+    15-16) con norm `nextn.*` annidate, mai eseguito nel loop principale;
+    graph separato `graph_mtp` (q35:510+). Ignorato (D4).
+11. Tipo layer: `is_recr(il) = (il+1) % 4 != 0` (q35:17-21) → attention nei
+    blk 3,7,...,63 (16) + blk.64.
 
 ## Piano TP e memoria
 
