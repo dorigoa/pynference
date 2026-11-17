@@ -115,9 +115,19 @@ def test_two_layers_budget_spread(tp):
     # swap reserved first (2t), 8t left: expert-major fill stays even, 4+4
     assert st.maps[0].R == 4 and st.maps[0].S == 5
     assert st.maps[1].R == 4 and st.maps[1].S == 5
-    assert st.pinned_bytes() == 8 * t  # each layer pins its 4 non-residents
+    # S17 lazy pools: build pins nothing (eager pinning fed the host OOM
+    # killer in job S17-4); a pool pins its rows on the first swap miss.
+    assert st.pinned_bytes() == 0
+    assert st.pinned_planned_bytes() == 8 * t  # 4 non-residents per layer
+    for e in (4, 5, 6, 7):  # swap_slots=1: one fresh miss per resolve
+        st.resolve(0, [e])
+        st.resolve(1, [e])
+    assert st.pinned_bytes() == 8 * t  # both layers pinned all 4+4 rows
 
 
 def test_pinned_pool_flag(tp):
     st = _store(tp, budget=0)
-    assert st.pools[0, "gate"].buf.is_pinned()  # inside a GPU job: page-locked
+    pool = st.pools[0, "gate"]
+    assert pool.buf is None  # lazy store: nothing pinned at build
+    st.resolve(0, [3])  # first swap miss allocates and pins the pool
+    assert pool.buf is not None and pool.buf.is_pinned()  # inside a GPU job

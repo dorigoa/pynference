@@ -1,0 +1,60 @@
+== start 10:22:42
+== pytest gpu exit 1 (10:25:24)
+FAILED tests/gpu/test_moe_store.py::test_two_layers_budget_spread - assert 0 ...
+FAILED tests/gpu/test_moe_store.py::test_pinned_pool_flag - AttributeError: '...
+2 failed, 107 passed, 1 skipped, 1 warning in 161.18s (0:02:41)
+FAILED tests/gpu/test_moe_store.py::test_two_layers_budget_spread - assert 0 ...
+FAILED tests/gpu/test_moe_store.py::test_pinned_pool_flag - AttributeError: '...
+== ours exit 1 (10:26:33)
+  MoE: 128 experts x 36 layers, budget 20.00 GB (dense 1.34, kv 0.02, scratch 1.07)
+  MoE: 1440 of 2304 local experts resident, 72 swap slots, store 19.99 GB, pinned 0.00 GB
+  gpt-oss: load done in 33.9s
+[0]:
+  time      : 2026-11-17_10:26:29
+  host      : ubuntu
+  rank      : 1 (local_rank: 1)
+  exitcode  : -9 (pid: 2808485)  (SIGKILL)
+  error_file: <N/A>
+  traceback : Signal 9 (SIGKILL) received by PID 2808485
+=========================================================
+-- kernel oom lines:
+Nov 17 10:26:29 ubuntu kernel:  __alloc_pages_may_oom+0x10a/0x1e0
+Nov 17 10:26:29 ubuntu kernel: [  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name
+Nov 17 10:26:29 ubuntu kernel: [    713]   986   713     2590        4        0        4         0    65536      168          -900 systemd-oomd
+Nov 17 10:26:29 ubuntu kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=systemd-journald.service,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/app.slice/app-dbus\x2d:1.1\x2dorg.gnome.OnlineAccounts.slice/dbus-:1.1-org.gnome.OnlineAccounts@8.service,task=goa-daemon,pid=2761134,uid=1000
+Nov 17 10:26:29 ubuntu kernel: Out of memory: Killed process 2761134 (goa-daemon) total-vm:460328kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:232kB oom_score_adj:100
+Nov 17 10:26:29 ubuntu kernel: snapd invoked oom-killer: gfp_mask=0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP), order=0, oom_score_adj=-900
+Nov 17 10:26:29 ubuntu kernel:  oom_kill_process.cold+0xb/0xb4
+Nov 17 10:26:29 ubuntu kernel:  __alloc_pages_may_oom+0x10a/0x1e0
+Nov 17 10:26:29 ubuntu kernel: [  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name
+Nov 17 10:26:29 ubuntu kernel: [    713]   986   713     2590        4        0        4         0    65536      168          -900 systemd-oomd
+Nov 17 10:26:29 ubuntu kernel: oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=snapd.service,mems_allowed=0,global_oom,task_memcg=/user.slice/user-1000.slice/user@1000.service/session.slice/pipewire.service,task=pipewire,pid=2760884,uid=1000
+Nov 17 10:26:29 ubuntu kernel: Out of memory: Killed process 2760884 (pipewire) total-vm:104248kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:108kB oom_score_adj:100
+Nov 17 10:26:29 ubuntu kernel: Out of memory: Killed process 2760893 (pipewire-pulse) total-vm:109104kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:104kB oom_score_adj:100
+Nov 17 10:26:29 ubuntu kernel: Out of memory: Killed process 2761151 (goa-identity-se) total-vm:391964kB, anon-rss:0kB, file-rss:12kB, shmem-rss:0kB, UID:1000 pgtables:132kB oom_score_adj:100
+Nov 17 10:26:29 ubuntu kernel: Out of memory: Killed process 2808485 (python) total-vm:77119628kB, anon-rss:0kB, file-rss:16kB, shmem-rss:0kB, UID:1000 pgtables:88720kB oom_score_adj:0
+JOURNAL_UNAVAILABLE
+== diff strict exit 1 (10:26:33)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/results/jobs/S17-5/run_bench.py", line 12, in <module>
+    mod.main()
+    ~~~~~~~~^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 192, in main
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S17-5/ours.json'
+== ppl exit 1 (10:27:40)
+  MoE: 128 experts x 36 layers, budget 20.01 GB (dense 1.34, kv 0.01, scratch 1.07)
+  MoE: 1441 of 2304 local experts resident, 72 swap slots, store 20.00 GB, pinned 0.00 GB
+  gpt-oss: load done in 29.8s
+  exitcode  : -9 (pid: 2811165)  (SIGKILL)
+  error_file: <N/A>
+  traceback : Signal 9 (SIGKILL) received by PID 2811165
+=========================================================
+PPL_EXTRACT_FAIL
+== ppl compare exit 3 (10:27:40)
+== summary: pytest=1 ours=1 diff=1 ppl=1 pplcmp=3
+== end 10:27:40
