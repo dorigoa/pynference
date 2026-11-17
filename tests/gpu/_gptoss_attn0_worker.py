@@ -18,6 +18,8 @@ import torch
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 
+os.environ.setdefault("PYI_GPTOSS_SKIP_MOE", "1")   # layer-0 attention only: no expert store
+
 MODEL = os.environ.get("GPTOSS_GGUF", "/nvme/gguf/gpt-oss-120b/gpt-oss-120b-MXFP4.gguf")
 DUMP = os.environ.get("GPTOSS_DUMP")
 COS_TOL = 0.9999         # plan S16 step 4: GPU vs CPU reference

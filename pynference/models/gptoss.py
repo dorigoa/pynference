@@ -20,6 +20,7 @@ norms replicated.
 from __future__ import annotations
 
 import math
+import os
 import time
 from dataclasses import dataclass
 
@@ -260,7 +261,13 @@ class GPTOss:
                 print(f"  loaded {il + 1}/{c.n_layer} layers ({time.time() - t0:.0f}s)", flush=True)
         # the expert budget needs the KV cache allocated, so size the MoE after reset()
         self.reset()
-        self.store, self.moe = self._load_moe()
+        if os.environ.get("PYI_GPTOSS_SKIP_MOE"):
+            # attention-only tests (tests/gpu/_gptoss_attn0_worker): skip the
+            # expert store entirely (its VRAM + pinned RAM does not fit there)
+            self.store, self.moe = None, None
+            self._weights_bytes, self._scratch_bytes = self._dense_bytes, 0
+        else:
+            self.store, self.moe = self._load_moe()
         torch.xpu.synchronize(dev)
         self.load_seconds = time.time() - t0
         if tp.is_main:
