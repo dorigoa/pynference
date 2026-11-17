@@ -25,11 +25,23 @@ not the `j // 3` the plan first guessed (S19 map A.12); the delta-rule
 output is scaled by 1/sqrt(S); the conv weight `w` is logical `[C, 4]`
 (channel-major taps), which is also the raw GGUF byte order of
 `ssm_conv1d` (`{4, 10240}` row-major, qwen35.cpp:87).
+
+The Triton kernels at the bottom (`decode`, `prefill`) reproduce the
+vectorized references on GPU: conv + SiLU one channel block at a time,
+then one program per value head holding the whole 128x128 state in
+registers. Both update `conv_state` and `state` in place, as the decode
+loop needs; callers pass copies when they also want the old values.
 """
 from __future__ import annotations
 
 import numpy as np
 import torch
+import triton
+import triton.language as tl
+
+
+def _np2(n: int) -> int:
+    return triton.next_power_of_2(n)
 
 
 def _key_map(n_heads: int, n_key_heads: int, device: torch.device) -> torch.Tensor:
@@ -190,3 +202,78 @@ def norm_gated_ops_ref(out, z, w_norm, eps):
     rms = np.sqrt((out * out).sum(-1) / np.float32(n) + np.float32(eps))
     y = (out / rms[..., None]) * w_norm
     return y * (z / (np.float32(1.0) + np.exp(-z)))
+
+
+# ------------------------------------------------------------------ decode kernel
+@triton.jit
+def _conv_decode_k(X, ST, W, Y, C, stride_st, K: tl.constexpr, BLOCK_C: tl.constexpr):
+    """One token through the causal depthwise conv + SiLU; `conv_state` in place.
+
+    X: [C] raw conv input; ST: [K-1, C] rows oldest first, shifted after the
+    output is written; W: [C, K] taps; Y: [C] post-SiLU output.
+    """
+    c = tl.program_id(0) * BLOCK_C + tl.arange(0, BLOCK_C)
+    m = c < C
+    x = tl.load(X + c, mask=m, other=0.0)
+    acc = tl.zeros([BLOCK_C], dtype=tl.float32)
+    for i in tl.static_range(K - 1):
+        acc += tl.load(ST + i * stride_st + c, mask=m, other=0.0) \
+            * tl.load(W + c * K + i, mask=m, other=0.0)
+    acc += x * tl.load(W + c * K + (K - 1), mask=m, other=0.0)
+    tl.store(Y + c, acc * tl.sigmoid(acc), mask=m)
+    for u in tl.static_range(K - 1):      # row u <- old row u+1 (or x): reads
+        if u + 1 < K - 1:                 # only rows this program has not
+            v = tl.load(ST + (u + 1) * stride_st + c, mask=m, other=0.0)
+        else:
+            v = x
+        tl.store(ST + u * stride_st + c, v, mask=m)
+
+
+@triton.jit
+def _delta_decode_k(Y, G, BETA, ST, OUT, H_K, S, eps, scale, BLOCK_S: tl.constexpr):
+    """One token of the gated delta rule, one program per value head.
+
+    The whole [S, S] state of the head lives in registers and is written back
+    in place. Y: [C] post-conv rows, split q | k | v (widths H_k*S, H_k*S,
+    H_v*S); G, BETA: [H_v]; OUT: [H_v, S]. q/k get the per-head L2 norm of
+    Mappa A.8; heads share key/query heads as `h % H_K` (ops.cpp:11079).
+    """
+    h = tl.program_id(0)
+    km = h % H_K
+    s = tl.arange(0, BLOCK_S)
+    m = s < S
+    q = tl.load(Y + km * S + s, mask=m, other=0.0)
+    k = tl.load(Y + (H_K + km) * S + s, mask=m, other=0.0)
+    v = tl.load(Y + (2 * H_K + h) * S + s, mask=m, other=0.0)
+    q = q * tl.rsqrt(tl.sum(q * q, 0) + eps)
+    k = k * tl.rsqrt(tl.sum(k * k, 0) + eps)
+    ii = tl.arange(0, BLOCK_S)[:, None]
+    m2 = (ii < S) & (s[None, :] < S)
+    base = ST + h * S * S + ii * S + s[None, :]
+    M = tl.load(base, mask=m2, other=0.0) * tl.exp(tl.load(G + h))
+    delta = (v - tl.sum(M * k[:, None], 0)) * tl.load(BETA + h)
+    M = M + k[:, None] * delta[None, :]
+    tl.store(OUT + h * S + s, tl.sum(M * q[:, None], 0) * scale, mask=m)
+    tl.store(base, M, mask=m2)
+
+
+def decode(x_new, conv_state, w, g, beta, state, n_key_heads, qk_eps=1e-6):
+    """One token through conv+SiLU and the gated delta rule (Triton, f32).
+
+    x_new [C] raw conv input (the qkv rows), conv_state [K-1, C] and
+    state [H_v, S, S] are updated **in place**; w [C, K]; g/beta [H_v].
+    Returns the raw delta output [H_v, S] scaled by 1/sqrt(S): `norm_gated`
+    with the `attn_gate` slice and `ssm_out` come later, in the model.
+    """
+    C = x_new.shape[0]
+    H_v, S, S2 = state.shape
+    assert S == S2
+    y = torch.empty_like(x_new)
+    _conv_decode_k[(triton.cdiv(C, 1024),)](
+        x_new, conv_state, w, y, C, conv_state.stride(0),
+        K=w.shape[1], BLOCK_C=1024, num_warps=4)
+    out = torch.empty(H_v, S, dtype=torch.float32, device=x_new.device)
+    _delta_decode_k[(H_v,)](
+        y, g, beta, state, out, n_key_heads, S, qk_eps, S ** -0.5,
+        BLOCK_S=_np2(S), num_warps=8)
+    return out
