@@ -10,7 +10,7 @@ import pytest
 import torch
 
 from pynference.models.gptoss import (GPTOss, GPTOSSConfig, _Layer, attn_prefill,
-                                      rope_yarn_table)
+                                      parse_meminfo, rope_yarn_table)
 
 n_embd, nq, nkv, D = 8, 4, 2, 4        # n_rot == head_dim, like the real model
 n_vocab, window, eps, max_ctx = 11, 3, 1e-5, 12
@@ -122,6 +122,7 @@ def _stub(seed=7):
     m.store = _Store()
     m.moe = [_MoE(torch.randn(n_embd, n_embd) * 0.1) for _ in range(n_layer)]
     m._weights_bytes, m._scratch_bytes = 1000, 2000
+    m._diag_n = 0
     return m
 
 
@@ -274,3 +275,57 @@ def test_expert_budget_falls_back_to_d8_without_mem_get_info(monkeypatch):
     m = _stub(seed=53)
     want = int(30.0e9) - GPTOss.EXPERT_GPU_OVERHEAD_BYTES - DENSE - KV - SCRATCH
     assert m._expert_budget(DENSE, KV, SCRATCH) == want
+
+
+# ---- PYI_MEMDIAG diagnostics (job S17-6, host-OOM diagnosis) ----
+
+MEMINFO = """MemTotal:       64000000 kB
+MemFree:         2000000 kB
+MemAvailable:   33554432 kB
+GPUActive:      60775472 kB
+"""
+VMSTAT = """nr_free_pages 500000
+nr_gpu_active 17877696
+"""
+
+
+def test_parse_meminfo_reads_mem_available_and_gpu_active():
+    assert parse_meminfo(MEMINFO) == (33554432, 60775472)
+
+
+def test_parse_meminfo_gpu_active_fallback_pages_to_kb():
+    """Kernel 7.3 exposes GPUActive in meminfo; older dumps have nr_gpu_active
+    (4 KiB pages) only in /proc/vmstat -> same kB unit."""
+    assert parse_meminfo(MEMINFO.replace("GPUActive:      60775472 kB\n", ""))[1] == -1
+    assert parse_meminfo(VMSTAT) == (-1, 17877696 * 4)
+
+
+def _decode8(m, first):
+    for t in range(8):                               # 8 < max_ctx, one ring pass
+        m.decode((t + first) % n_vocab)
+
+
+def test_memdiag_off_without_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("PYI_MEMDIAG", raising=False)
+    monkeypatch.setattr(GPTOss, "_attention_decode", _fake_attention_decode)
+    m = _stub(seed=61)
+    m._memdiag("load")
+    _decode8(m, 0)
+    assert list(tmp_path.iterdir()) == []            # no env: writes nothing
+
+
+def test_memdiag_samples_load_and_every_8_decode_tokens(tmp_path, monkeypatch):
+    out = tmp_path / "memdiag.log"
+    monkeypatch.setenv("PYI_MEMDIAG", str(out))
+    monkeypatch.setattr(GPTOss, "_attention_decode", _fake_attention_decode)
+    m = _stub(seed=67)
+    m._memdiag("load")
+    _decode8(m, 0)
+    m.reset()                                        # clears n_past, keeps _diag_n
+    _decode8(m, 8)
+    lines = out.read_text().splitlines()
+    phases = [ln.split()[3] for ln in lines]
+    assert phases == ["load", "decode8", "decode16"]
+    assert "rank0" in lines[0] and "mem_avail=" in lines[0]
+    assert "store_pinned=%.2fGiB" % (6789 / 2**30) in lines[0]
+    assert "torch_alloc=0.00GiB" in lines[0]         # CPU stub, no xpu device

@@ -224,6 +224,29 @@ def moe_expert_bias(g: GGUFFile, il: int):
     return tuple(out)
 
 
+def parse_meminfo(text: str) -> tuple[int, int]:
+    """(MemAvailable, GPUActive) in kB from a /proc/meminfo dump (-1 if absent).
+    GPUActive is a kernel 7.3 field: system RAM held for GPU processes by the
+    driver (S17 host-OOM diagnosis, job S17-6). Fallback: nr_gpu_active in
+    /proc/vmstat, counted in 4 KiB pages."""
+    avail = gpuact = -1
+    for line in text.splitlines():
+        key, sep, rest = line.partition(":")
+        if sep == ":":
+            fields = rest.split()               # meminfo style: "key: value kB"
+        else:                                   # vmstat style: "key value"
+            key, *fields = key.split()
+        if not key or not fields:
+            continue
+        if key == "MemAvailable":
+            avail = int(fields[0])
+        elif key == "GPUActive":
+            gpuact = int(fields[0])
+        elif key == "nr_gpu_active" and gpuact < 0:
+            gpuact = int(fields[0]) * 4
+    return avail, gpuact
+
+
 class _Layer:
     pass
 
@@ -244,6 +267,7 @@ class GPTOss:
         self._nsp_full = (max_ctx + self._split_full - 1) // self._split_full
         self.fast_decode, self.use_graph = True, False   # C3; the graph comes in S18
         self._dense_bytes = 0   # non-expert GPU bytes, for the expert budget (D8)
+        self._diag_n = 0        # decode-token counter for PYI_MEMDIAG sampling
         t0 = time.time()
 
         self.v0, self.v1 = tp.split(c.n_vocab)
@@ -273,6 +297,7 @@ class GPTOss:
         self.load_seconds = time.time() - t0
         if tp.is_main:
             print(f"  gpt-oss: load done in {self.load_seconds:.1f}s", flush=True)
+        self._memdiag("load")
 
     # ---- loading ----
     def _f32(self, name: str) -> torch.Tensor:
@@ -580,6 +605,7 @@ class GPTOss:
             self.n_past += len(part)
             if all_logits:
                 outs.append(self.logits(x))
+        self._memdiag("prefill")
         if all_logits:
             return torch.cat(outs)
         return self.logits(x[-1:])[0]
@@ -598,6 +624,9 @@ class GPTOss:
             h = rms_norm(x, self.layers[il].post_attn_norm, c.eps)
             x = x + self.moe[il].decode(h).view(1, -1)   # MoE.decode -> [k] summed
         self.n_past += 1
+        self._diag_n += 1
+        if self._diag_n % 8 == 0:
+            self._memdiag(f"decode{self._diag_n}")
         return self.logits(x)[0]
 
     def memory_report(self) -> dict:
@@ -611,3 +640,47 @@ class GPTOss:
                 "pinned_host": self.store.pinned_bytes(),
                 "device_total": (self._weights_bytes + self.store.memory_bytes()
                                  + self.kv_bytes() + self._scratch_bytes)}
+
+    # ---- host/driver memory diagnostics (job S17-6) ----
+    def _memdiag(self, phase: str) -> None:
+        """If PYI_MEMDIAG=<file> is set, append one line per sampling point:
+        host MemAvailable and kernel GPUActive (/proc/meminfo, fallback
+        nr_gpu_active in /proc/vmstat: RAM held by the xe driver for GPU
+        processes), this rank's torch xpu allocated/reserved and the store's
+        pinned host bytes (pool allocated_bytes). Distinguishes HostPool-pinned
+        growth from torch-cache growth in the host OOM (S17, "Problemi aperti").
+        Called at load, after prefill and every 8 decode tokens. Never raises:
+        diagnostics must not change the run."""
+        path = os.environ.get("PYI_MEMDIAG")
+        if not path:
+            return
+        avail = gpuact = -1
+        try:
+            with open("/proc/meminfo") as f:
+                avail, gpuact = parse_meminfo(f.read())
+        except OSError:
+            pass
+        if gpuact < 0:
+            try:
+                with open("/proc/vmstat") as f:
+                    _, gpuact = parse_meminfo(f.read())
+            except OSError:
+                pass
+        try:
+            if torch.device(self.tp.device).type == "xpu":
+                alloc = torch.xpu.memory_allocated(self.tp.device)
+                resv = torch.xpu.memory_reserved(self.tp.device)
+            else:
+                alloc = resv = 0
+        except (AttributeError, RuntimeError):
+            alloc = resv = -1
+        store = getattr(self, "store", None)
+        pinned = store.pinned_bytes() if store is not None else 0
+        try:
+            with open(path, "a") as f:
+                f.write(f"{time.time():.3f} rank{self.tp.rank} pid{os.getpid()} {phase} "
+                        f"mem_avail={avail / 2**20:.2f}GiB gpu_active={gpuact / 2**20:.2f}GiB "
+                        f"torch_alloc={alloc / 2**30:.2f}GiB torch_resv={resv / 2**30:.2f}GiB "
+                        f"store_pinned={pinned / 2**30:.2f}GiB\n")
+        except OSError:
+            pass
