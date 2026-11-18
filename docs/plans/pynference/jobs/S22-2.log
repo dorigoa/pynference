@@ -1,0 +1,31 @@
+== start 11:57:33
+== pytest_gpu exit 0 (12:01:25)
+tests/gpu/test_moe_layer.py::test_decode_swiglu_oai_vs_cpu_reference
+  /home/alvise/pynference/tests/gpu/test_moe_layer.py:87: RuntimeWarning: overflow encountered in exp
+    return g / (1.0 + np.exp(-alpha * g)) * (u + 1.0)
+
+== graph60 exit 0 (12:02:41)
+[graph] prefill 41 tokens: 12.780 ms/token (78 token/s)
+[graph] wall time per token: 30.0 ms (33.36 tok/s)
+GPU kernel time per token: 154.3 ms
+kernel                                                        ms/token  calls/token
+== graph2000 exit 0 (12:03:45)
+[graph] prefill 2000 tokens: 2.479 ms/token (403 token/s)
+[graph] wall time per token: 30.6 ms (32.69 tok/s)
+== regress_qwen35 exit 126 (12:03:45)
+== regress_gemma4 exit 126 (12:03:45)
+== graph_compare exit 0 (12:04:42)
+  loaded 60/64 layers (26s)
+  qwen35: load done in 29.2s
+chat-it: 'The user is asking in Italian: "What is the capital of Italy? Answer in one sent'
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Octavian, the adopted son of Julius Caesar, was granted the title Augustus by t'
+== graph_compare_strict exit 0 (12:04:42)
+   ref:  '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+   ours: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw      same greedy tokens 24/24, max |dp| top-10 0.0050, mean partial KL -1.35e-04
+   ref:  ' Octavian, the adopted son of Julius Caesar, was granted the title Augustus by the Roman Senate. Thi'
+   ours: ' Octavian, the adopted son of Julius Caesar, was granted the title Augustus by the Roman Senate. Thi'
+C8 strict: PASS
+== end 12:04:42
