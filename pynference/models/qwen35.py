@@ -36,6 +36,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from ..gguf import GGUFFile
 from ..parallel import TP
@@ -318,14 +319,121 @@ class Qwen35:
         x = rms_norm(x, self.output_norm, self.cfg.eps)
         return self.tp.all_gather(self.lm_head(x))
 
-    # ---- C3 driver: filled in S21 steps 2-3 ----
+    # ---- gated DeltaNet layer (S21 step 2, Mappa A) ----
+    def _layer_recurrent(self, il: int, x: torch.Tensor) -> torch.Tensor:
+        """One gated DeltaNet layer over a prefill chunk (Mappa A).
+
+        RMSNorm, the qkv/gate/alpha/beta projections in fp32 (dense_prefill,
+        same C8 reasoning as gpt-oss), then `deltanet.prefill`: causal conv
+        + SiLU and the gated delta rule, holding the conv history and the
+        delta state in `self.cache[il]` in place. The key rule inside the
+        rank is `h % n_key_l` (S19 map: reproduces global `j % 16`). Then the
+        gated per-head RMS norm with silu(z) and `ssm_out` + all-reduce.
+        x [T, n_embd] float32 -> block delta [T, n_embd] float32."""
+        from .. import deltanet   # Triton at import time only when a GPU path runs
+        c, L, tp = self.cfg, self.layers[il], self.tp
+        S, Hv, T = c.ssm_state, self.n_value_l, x.shape[0]
+        conv_state, state = self.cache[il]
+        h = rms_norm(x, L.attn_norm, c.eps)
+        qkv = dense_prefill(L.qkv, h)                       # [T, _qkv_l]
+        z = dense_prefill(L.gate, h)                        # [T, Hv*S]
+        alpha = dense_prefill(L.alpha, h)                   # [T, Hv]
+        beta = torch.sigmoid(dense_prefill(L.beta, h))      # Mappa A.3
+        g = L.ssm_a * F.softplus(alpha + L.dt_bias)         # ssm_a holds -exp(A_log) (A.4)
+        y = deltanet.prefill(qkv, conv_state, L.conv, g, beta, state,
+                             self.n_key_l, qk_eps=c.eps)    # [T, Hv, S], scaled 1/sqrt(S)
+        y = deltanet.norm_gated(y, z.view(T, Hv, S), L.ssm_norm, c.eps)
+        return tp.all_reduce(dense_prefill(L.ssm_out, y.reshape(T, -1)))
+
+    def _layer_recurrent_decode(self, il: int, x: torch.Tensor) -> torch.Tensor:
+        """Decode twin of `_layer_recurrent`: x [1, n_embd] -> [1, n_embd].
+        QLinear GEMVs (fp32 at M=1) + `deltanet.decode`."""
+        from .. import deltanet
+        c, L, tp = self.cfg, self.layers[il], self.tp
+        S, Hv = c.ssm_state, self.n_value_l
+        conv_state, state = self.cache[il]
+        h = rms_norm(x, L.attn_norm, c.eps)
+        qkv = L.qkv(h)                                      # [1, _qkv_l]
+        z = L.gate(h)
+        alpha = L.alpha(h)
+        beta = torch.sigmoid(L.beta(h))
+        g = L.ssm_a * F.softplus(alpha + L.dt_bias)
+        y = deltanet.decode(qkv[0], conv_state, L.conv, g[0], beta[0], state,
+                            self.n_key_l, qk_eps=c.eps)     # [Hv, S]
+        y = deltanet.norm_gated(y, z[0].view(Hv, S), L.ssm_norm, c.eps)
+        return tp.all_reduce(L.ssm_out(y.view(1, -1)))
+
+    # ---- dense SwiGLU FFN (Mappa B.7/8), shared by both paths ----
+    def _ffn(self, il: int, x: torch.Tensor) -> torch.Tensor:
+        """post_attention_norm + SwiGLU FFN (fp32) + all-reduce:
+        x [T, n_embd] -> block delta [T, n_embd] float32."""
+        L, tp = self.layers[il], self.tp
+        h = rms_norm(x, L.post_attn_norm, self.cfg.eps)
+        g = dense_prefill(L.ffn_gate, h)
+        u = dense_prefill(L.ffn_up, h)
+        return tp.all_reduce(dense_prefill(L.ffn_down, F.silu(g) * u))
+
+    def _ffn_decode(self, il: int, x: torch.Tensor) -> torch.Tensor:
+        """Decode twin of `_ffn`: x [1, n_embd] -> [1, n_embd] float32."""
+        L, tp = self.layers[il], self.tp
+        h = rms_norm(x, L.post_attn_norm, self.cfg.eps)
+        return tp.all_reduce(L.ffn_down(F.silu(L.ffn_gate(h)) * L.ffn_up(h)))
+
+    # ---- full attention layer: S21 step 3 ----
+    def _layer_attn(self, il: int, x: torch.Tensor, pos: torch.Tensor, pos0: int) -> torch.Tensor:
+        raise NotImplementedError("qwen35 attention layer: S21 step 3")
+
+    def _layer_attn_decode(self, il: int, x: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError("qwen35 attention layer (decode): S21 step 3")
+
+    # ---- C3 driver ----
     @torch.inference_mode()
     def forward(self, tokens: list[int], chunk: int = 512, all_logits: bool = False) -> torch.Tensor:
-        raise NotImplementedError("qwen35.forward: S21 step 2 (DeltaNet) / step 3 (attention, FFN)")
+        """Append tokens to the context; return the logits of the last token
+        ([n_vocab]) or of every token ([len(tokens), n_vocab]).
+
+        Layer loop (S19 map B): x += attn_block(x); x += FFN(rms_norm(x,
+        post_attn_norm)); the FFN residual re-adds the pre-norm value."""
+        c, dev = self.cfg, self.tp.device
+        if self.n_past + len(tokens) > self.max_ctx:
+            raise ValueError(f"context full ({self.n_past} + {len(tokens)} > {self.max_ctx})")
+        if len(tokens) == 1 and not all_logits and self.fast_decode:
+            return self.decode(tokens[0])
+        outs = []
+        for s in range(0, len(tokens), chunk):
+            part = tokens[s:s + chunk]
+            pos0 = self.n_past
+            ids = torch.tensor(part, dtype=torch.long, device=dev)
+            pos = torch.arange(pos0, pos0 + len(part), dtype=torch.long, device=dev)
+            x = self.embed_tokens(ids)
+            for il in range(c.n_layer):
+                blk = (self._layer_attn(il, x, pos, pos0) if self.layers[il].is_attn
+                       else self._layer_recurrent(il, x))
+                x = x + blk
+                x = x + self._ffn(il, x)
+            self.n_past += len(part)
+            if all_logits:
+                outs.append(self.logits(x))
+        if all_logits:
+            return torch.cat(outs)
+        return self.logits(x[-1:])[0]
 
     @torch.inference_mode()
     def decode(self, token: int) -> torch.Tensor:
-        raise NotImplementedError("qwen35.decode: S21 step 2 (DeltaNet) / step 3 (attention, FFN)")
+        """One generated token: logits [n_vocab] float32 on every rank.
+        Eager path; the XPUGraph decode is S22."""
+        if self.n_past >= self.max_ctx:
+            raise ValueError(f"context full ({self.n_past} >= {self.max_ctx})")
+        dev = self.tp.device
+        pos = torch.tensor([self.n_past], dtype=torch.long, device=dev)
+        self.n_past += 1
+        x = self.embed_tokens(torch.tensor([token], dtype=torch.long, device=dev))
+        for il in range(self.cfg.n_layer):
+            blk = (self._layer_attn_decode(il, x, pos) if self.layers[il].is_attn
+                   else self._layer_recurrent_decode(il, x))
+            x = x + blk
+            x = x + self._ffn_decode(il, x)
+        return self.logits(x)[0]
 
     def memory_report(self) -> dict:
         """Bytes on this GPU (C3)."""

@@ -297,8 +297,12 @@ def _conv_prefill_k(X, ST, STN, W, Y, T, C, stride_x, stride_st, stride_stn,
         r = tb + i                                     # row of the padded input
         h = tl.load(ST + r[:, None] * stride_st + cb[None, :],
                     mask=(r < K - 1)[:, None] & mc[None, :], other=0.0)
+        # `(tb < T)` too: the last token block would otherwise read past X's
+        # rows (garbage fed to sigmoid; masked from the store, but the load
+        # itself is out of bounds — caught under TRITON_INTERPRET in S21)
         xv = tl.load(X + (r - (K - 1))[:, None] * stride_x + cb[None, :],
-                     mask=(r >= K - 1)[:, None] & mc[None, :], other=0.0)
+                     mask=(r >= K - 1)[:, None] & (tb < T)[:, None] & mc[None, :],
+                     other=0.0)
         acc += (h + xv) * tl.load(W + cb[None, :] * K + i, mask=mc[None, :], other=0.0)
     y = acc * tl.sigmoid(acc)
     tl.store(Y + tb[:, None] * C + cb[None, :], y, mask=(tb < T)[:, None] & mc[None, :])
@@ -306,7 +310,10 @@ def _conv_prefill_k(X, ST, STN, W, Y, T, C, stride_x, stride_st, stride_stn,
         # `r`/`xv` are still live from the loop above with block shapes; the
         # history branch needs fresh names or Triton rejects the redefinition.
         for u in tl.static_range(K - 1):
-            r2 = T + u
+            # block-shaped row index: a scalar `r2` mask compiles away on GPU
+            # but the TRITON_INTERPRET CPU path rejects the scalar & tensor
+            # mask combination (S21 test of the model layer); same semantics
+            r2 = tl.full([BLOCK_C], T + u, tl.int32)
             hv = tl.load(ST + r2 * stride_st + cb, mask=(r2 < K - 1) & mc, other=0.0)
             xv2 = tl.load(X + (r2 - (K - 1)) * stride_x + cb,
                           mask=(r2 >= K - 1) & mc, other=0.0)
