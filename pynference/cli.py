@@ -229,7 +229,9 @@ def _chat(argv: list[str]) -> int:
         new_prompt = len(ids) - len(prev) if ids[:len(prev)] == prev and ids != prev else len(ids)
         prompt_len = len(ids)
         t0 = time.perf_counter()
-        sp[0] = ReasoningSplitter(probe.family) if probe is not None else None
+        # without thinking the prompt already closed the think block: the
+        # answer is content from its first token (else it was all hidden)
+        sp[0] = ReasoningSplitter(probe.family, thinking=thinking) if probe is not None else None
         in_thinking[0] = False
         generated = engine.run({"op": "generate", "ids": ids, "max_tokens": args.n_predict,
                                 "sampling": sampling, "stop_ids": stop_ids}, on_token=on_token)

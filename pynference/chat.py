@@ -103,7 +103,12 @@ class ReasoningSplitter:
     (reasoning, content) deltas safe to emit now, holding back the tail of a
     possible tag; `close()` flushes what a cut stream left. Works on text
     decoded with special tokens (control tags included): the state machine
-    swallows the channel/noise tags."""
+    swallows the channel/noise tags.
+
+    `thinking=False` is for a prompt rendered without thinking (Qwen
+    `enable_thinking=False`): the template already closed the think block in
+    the prompt, so a qwen answer is content from its first token. gpt-oss is
+    unaffected (its channels say where each part goes)."""
 
     FAMILIES = {"gpt-4o": "gpt-oss", "qwen35": "qwen"}
 
@@ -111,7 +116,7 @@ class ReasoningSplitter:
                          HARMONY_CLOSE, HARMONY_START, *HARMONY_STOPS),
              "qwen": (QWEN_THINK_END,)}
 
-    def __init__(self, family: str):
+    def __init__(self, family: str, thinking: bool = True):
         if family not in self.FAMILIES.values():
             raise ValueError(f"no reasoning splitter for family {family!r}")
         self.family = family
@@ -119,7 +124,10 @@ class ReasoningSplitter:
         self.desc_text = ""      # gpt-oss: channel descriptor being read
         self.idle_text = ""      # gpt-oss: text seen outside any channel
         self.desc = False        # gpt-oss: between <|channel|> and <|message|>
-        self.state = "thinking" if family == "qwen" else "idle"
+        if family == "qwen":
+            self.state = "thinking" if thinking else "answer"
+        else:
+            self.state = "idle"
 
     @classmethod
     def from_tokenizer(cls, tok) -> "ReasoningSplitter | None":

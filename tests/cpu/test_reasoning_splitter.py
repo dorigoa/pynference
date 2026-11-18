@@ -54,6 +54,17 @@ class TestQwen:
         sp = ReasoningSplitter("qwen")
         assert stream_whole(sp, "mid reasoning") == ("mid reasoning", "")
 
+    def test_no_thinking_answer_is_content(self):
+        # --no-reasoning: the prompt already ends with the closed think block,
+        # so the stream is the answer (it was all hidden as reasoning before)
+        for chunk in (1, 3):
+            sp = ReasoningSplitter("qwen", thinking=False)
+            assert stream(sp, "2 + 2 fa 4.", chunk=chunk) == ("", "2 + 2 fa 4.")
+
+    def test_no_thinking_stray_tag_is_swallowed(self):
+        sp = ReasoningSplitter("qwen", thinking=False)
+        assert stream_whole(sp, "a" + QWEN_THINK_END + "b") == ("", "ab")
+
     def test_answer_part_after_tag_streams_out(self):
         sp = ReasoningSplitter("qwen")
         r, c = sp.push("think" + QWEN_THINK_END)
