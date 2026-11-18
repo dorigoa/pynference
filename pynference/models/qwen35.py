@@ -169,6 +169,9 @@ class Qwen35:
         self.n_value_l = c.n_value_heads // tp.world
         self._qkv_l = (2 * self.n_key_l + self.n_value_l) * c.ssm_state   # conv channels per rank
         self._scale = 1.0 / math.sqrt(c.head_dim)
+        # split/n_split for kernels.attn_decode over the full KV cache (gpt-oss, S17)
+        self._split_full = max(256, ((max_ctx + 63) // 64 + 15) // 16 * 16)
+        self._nsp_full = (max_ctx + self._split_full - 1) // self._split_full
         self.fast_decode, self.use_graph = True, False    # C3
         self._dense_bytes = 0
         t0 = time.time()
@@ -379,12 +382,74 @@ class Qwen35:
         h = rms_norm(x, L.post_attn_norm, self.cfg.eps)
         return tp.all_reduce(L.ffn_down(F.silu(L.ffn_gate(h)) * L.ffn_up(h)))
 
-    # ---- full attention layer: S21 step 3 ----
+    # ---- full attention layer (S21 step 3, Mappa B) ----
+    def _attention(self, il: int, q, k, v, pos: torch.Tensor, pos0: int) -> torch.Tensor:
+        """q [T, Hq, D]; k, v [T, Hkv, D], already normed and roped (fp32).
+        Stores k/v in the layer's KV cache and runs `attn_prefill` (dense
+        causal, no sliding window, no sinks; scale 1/sqrt(head_dim), Mappa
+        B.5). Returns [T, Hq*D] float32."""
+        kc, vc = self.cache[il]
+        T = q.shape[0]
+        kc[:, pos0:pos0 + T] = k.transpose(0, 1).to(kc.dtype)
+        vc[:, pos0:pos0 + T] = v.transpose(0, 1).to(vc.dtype)
+        kp = torch.arange(pos0 + T, device=q.device)
+        return attn_prefill(q, kc[:, :pos0 + T], vc[:, :pos0 + T], kp, pos, 0, self._scale)
+
     def _layer_attn(self, il: int, x: torch.Tensor, pos: torch.Tensor, pos0: int) -> torch.Tensor:
-        raise NotImplementedError("qwen35 attention layer: S21 step 3")
+        """RMSNorm, joint q|gate projection (512 rows per head: q 256 then
+        gate 256, Mappa B.2), per-head RMS q/k norms before RoPE (B.3),
+        partial NEOX RoPE on the first n_rot dims (B.4), dense causal GQA
+        (kv-head = h/6 contiguous, B.5), output gate attn_out *=
+        sigmoid(gate) before `attn_output` (B.6) + all-reduce.
+        x [T, n_embd] float32 -> block delta [T, n_embd] float32."""
+        c, L, tp = self.cfg, self.layers[il], self.tp
+        T, Hq, Hkv, D = x.shape[0], self.n_head_l, self.n_kv_l, c.head_dim
+        h = rms_norm(x, L.attn_norm, c.eps)
+        qg = dense_prefill(L.q, h).view(T, Hq, 2 * D)
+        q, gate = qg[..., :D], qg[..., D:]
+        k = dense_prefill(L.k, h).view(T, Hkv, D)
+        v = dense_prefill(L.v, h).view(T, Hkv, D)
+        q = rms_norm(q, L.q_norm, c.eps)
+        k = rms_norm(k, L.k_norm, c.eps)
+        cos, sin = self.cos[pos], self.sin[pos]
+        q = rope_neox(q, cos, sin)
+        k = rope_neox(k, cos, sin)
+        a = self._attention(il, q, k, v, pos, pos0)
+        a = a * torch.sigmoid(gate).reshape(T, Hq * D)
+        return tp.all_reduce(dense_prefill(L.o, a))
+
+    # ---- full attention layer, decode (T == 1) ----
+    def _attention_decode(self, il: int, q, k, v, pos: torch.Tensor) -> torch.Tensor:
+        """q [1, Hq, D]; k, v [1, Hkv, D], already normed and roped; pos [1]
+        int tensor = absolute position. Stores k/v at slot `pos` and runs
+        `kernels.attn_decode` over slots 0..pos. The kernel scores at scale
+        1.0 by design (gemma4 convention), so q carries the 1/sqrt(D) here
+        (same as gpt-oss). Returns [Hq, D] float32."""
+        from .. import kernels as K   # Triton at call time only: module header note
+        kc, vc = self.cache[il]
+        Hq, D = q.shape[1], q.shape[2]
+        kc.index_copy_(1, pos, k.transpose(0, 1).to(kc.dtype))
+        vc.index_copy_(1, pos, v.transpose(0, 1).to(vc.dtype))
+        return K.attn_decode((q * self._scale).reshape(Hq, D), kc, vc,
+                             pos + 1, self._nsp_full, self._split_full)
 
     def _layer_attn_decode(self, il: int, x: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError("qwen35 attention layer (decode): S21 step 3")
+        """Decode twin of `_layer_attn`: x [1, n_embd] -> [1, n_embd] float32."""
+        c, L, tp = self.cfg, self.layers[il], self.tp
+        Hq, Hkv, D = self.n_head_l, self.n_kv_l, c.head_dim
+        h = rms_norm(x, L.attn_norm, c.eps)
+        qg = L.q(h).view(1, Hq, 2 * D)
+        q, gate = qg[..., :D], qg[..., D:]
+        k = L.k(h).view(1, Hkv, D)
+        v = L.v(h).view(1, Hkv, D)
+        q = rms_norm(q, L.q_norm, c.eps)
+        k = rms_norm(k, L.k_norm, c.eps)
+        cos, sin = self.cos[pos], self.sin[pos]
+        q = rope_neox(q, cos, sin)
+        k = rope_neox(k, cos, sin)
+        a = self._attention_decode(il, q, k, v, pos)   # [Hq, D]
+        a = a * torch.sigmoid(gate[0])
+        return tp.all_reduce(L.o(a.view(1, Hq * D)))
 
     # ---- C3 driver ----
     @torch.inference_mode()
