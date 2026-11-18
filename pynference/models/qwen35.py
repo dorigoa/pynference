@@ -24,8 +24,9 @@ the key rule stays h % (H_k / world) and `pynference.deltanet` needs no
 new API; attention heads and FFN rows split contiguously; ssm_out /
 attn_output / ffn_down split by input columns + all-reduce; the
 vocabulary is split for the embedding lookup (masked + all-reduce) and
-the logits head (all_gather) - token_embd and output.weight are tied, so
-one copy is loaded (Mappa B.9, "tied, una copia").
+the logits head (all_gather).  Mappa B.9 said token_embd and output.weight
+are tied; in the Qwen3.8-27B-Q8_0 checkpoint they are NOT (separate Q8_0
+tensors, S21) - load output.weight when present, tie only when absent.
 """
 from __future__ import annotations
 
@@ -188,7 +189,11 @@ class Qwen35:
 
         self.v0, self.v1 = tp.split(c.n_vocab)
         self.embed = self._q_rows("token_embd.weight", [split_run(c.n_vocab, tp.world, tp.rank)])
-        self.lm_head = self.embed                          # tied, one copy (Mappa B.9)
+        # NOT tied in this checkpoint (S21): output.weight is a separate Q8_0
+        # tensor at its own offset; the S21-2 tie (lm_head = embed) fed the
+        # input-embedding matrix to the final hidden -> flat garbage logits.
+        self.lm_head = (self._q_rows("output.weight", [split_run(c.n_vocab, tp.world, tp.rank)])
+                        if "output.weight" in self.g.tensors else self.embed)  # tie if absent
         self.output_norm = self._f32("output_norm.weight")
         self.cos, self.sin = rope_table(c.n_rot, c.rope_base, max_ctx, dev)
 
