@@ -1,0 +1,86 @@
+== start 09:16:42
+== pytest gpu exit 0 (09:20:26)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+128 passed, 1 skipped, 1 warning in 222.53s (0:03:42)
+== ours exit 0 (09:21:44)
+  qwen35: load done in 35.3s
+  qwen35: load done in 35.3s
+chat-it: 'The user is asking in Italian: "What is the capital of Italy? Answer in one sent'
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Octavian, the adopted son of Julius Caesar, was granted the title Augustus by t'
+== diff strict exit 0 (09:21:44)
+chat-it  same greedy tokens 20/24, max |dp| top-10 0.0258, mean partial KL 3.07e-04
+   ref:  'The user is asking in Italian: "What is the capital of Italy? Answer in one sentence."\n\nThe capital '
+   ours: 'The user is asking in Italian: "What is the capital of Italy? Answer in one sentence." This is a sim'
+chat-en  same greedy tokens 24/24, max |dp| top-10 0.0059, mean partial KL 5.04e-05
+   ref:  'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+   ours: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+code     same greedy tokens 24/24, max |dp| top-10 0.0078, mean partial KL 5.98e-05
+   ref:  '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+   ours: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw      same greedy tokens 24/24, max |dp| top-10 0.0050, mean partial KL -1.35e-04
+   ref:  ' Octavian, the adopted son of Julius Caesar, was granted the title Augustus by the Roman Senate. Thi'
+   ours: ' Octavian, the adopted son of Julius Caesar, was granted the title Augustus by the Roman Senate. Thi'
+C8 strict: PASS
+== ppl exit 0 (09:22:45)
+Final estimate: PPL = 1.0167 +/- 0.00624  (2040 scored tokens, 18.2s)
+RES ppl ours 1.0167 ref 1.0166 rel 0.010% (limit 1%)
+== ppl compare exit 0 (09:22:45)
+== regress qwen35 exit 0 (09:26:22)
+Final estimate: PPL = 1.0167 +/- 0.00624  (2040 scored tokens, 25.1s)
+chat-it: max |dp| 2.59e-05 over top-10
+chat-en: max |dp| 6.17e-05 over top-10
+code: max |dp| 1.44e-06 over top-10
+raw: max |dp| 1.58e-05 over top-10
+ppl: baseline 1.0167, now 1.0167, rel diff 0.000%
+PASS
+PASS
+== chat reasoning exit 0 (09:28:40)
+[pynference] Qwen3.8-27B (qwen35), 2 GPU(s)
+  loaded 10/64 layers (5s)
+  loaded 20/64 layers (12s)
+  loaded 30/64 layers (21s)
+  loaded 40/64 layers (38s)
+  loaded 50/64 layers (55s)
+  loaded 60/64 layers (83s)
+  qwen35: load done in 97.3s
+[pynference] loaded in 97.3s + warm-up 21.8s
+[reasoning]
+The user is asking "Quanto fa 2 + 2?" which means "What is 2 + 2?" in Italian. They want the answer in one sentence. I should respond in Italian since the question is in Italian.
+
+
+
+2 + 2 fa 4.
+[stats] prompt new 68/68 tok, 59 tok in 4.93s = 12.0 tok/s
+[reasoning]
+We need to answer user: "What is the capital of France? Answer in one sentence." Simple. Need final one sentence.
+
+
+
+The capital of France is Paris.
+[stats] prompt new 153/153 tok, 36 tok in 3.41s = 10.6 tok/s
+== chat no-reasoning exit 0 (09:30:04)
+[pynference] Qwen3.8-27B (qwen35), 2 GPU(s)
+  loaded 10/64 layers (2s)
+  loaded 20/64 layers (4s)
+  loaded 30/64 layers (7s)
+  loaded 40/64 layers (11s)
+  loaded 50/64 layers (14s)
+  loaded 60/64 layers (25s)
+  qwen35: load done in 37.5s
+[pynference] loaded in 37.5s + warm-up 33.2s
+[stats] prompt new 28/28 tok, 8 tok in 1.10s = 7.3 tok/s
+[stats] prompt new 27/63 tok, 7 tok in 0.98s = 7.2 tok/s
+== regress gemma4 exit 0 (09:32:00)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 11.8s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== summary: pytest=0 ours=0 diff=0 ppl=0 pplcmp=0 boot=0 regressqwen=0 chatreason=0 chatnoreason=0 regressgemma=0
+== end 09:32:00
