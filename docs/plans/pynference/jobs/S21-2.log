@@ -1,0 +1,58 @@
+== start 02:42:44
+== pytest gpu exit 0 (02:46:27)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+128 passed, 1 skipped, 1 warning in 222.60s (0:03:42)
+dump: 92947 lines in results/jobs/S21-2/dump.txt
+== llama dump exit 0 (02:47:47)
+0.46.143.277 I number of input tokens = 7
+== ours dump exit 0 (02:48:33)
+ours attn_residual-0: shape [7, 5120] sum +84.9029
+ours attn_residual-3: shape [7, 5120] sum +191.3545
+ours ffn_out-0: shape [7, 5120] sum +13.7313
+ours ffn_out-3: shape [7, 5120] sum +3.5662
+ours post_ffn-0: shape [7, 5120] sum +98.6343
+ours post_ffn-3: shape [7, 5120] sum +194.9208
+== dump compare exit 1 (02:48:33)
+attn_norm-0: ours -132.0217 shape [7, 5120] | ref -132.0212 shape {5120, 7, 1, 1} | rel 3.31e-06 ok (limit 2%)
+attn_residual-0: ours +84.9029 shape [7, 5120] | ref +85.0983 shape {5120, 7, 1, 1} | rel 2.30e-03 ok (limit 2%)
+attn_post_norm-0: ours -22.0132 shape [7, 5120] | ref -21.0878 shape {5120, 7, 1, 1} | rel 4.39e-02 DIVERGE (limit 2%)
+ffn_out-0: ours +13.7313 shape [7, 5120] | ref +13.6165 shape {5120, 7, 1, 1} | rel 8.43e-03 ok (limit 2%)
+post_ffn-0: MISSING in llama dump
+attn_norm-3: ours +541.0758 shape [7, 5120] | ref +539.6291 shape {5120, 7, 1, 1} | rel 2.68e-03 ok (limit 2%)
+attn_residual-3: ours +191.3545 shape [7, 5120] | ref +191.3444 shape {5120, 7, 1, 1} | rel 5.28e-05 ok (limit 2%)
+attn_post_norm-3: ours +5.1766 shape [7, 5120] | ref +4.8584 shape {5120, 7, 1, 1} | rel 6.55e-02 DIVERGE (limit 2%)
+ffn_out-3: ours +3.5662 shape [7, 5120] | ref +3.4845 shape {5120, 7, 1, 1} | rel 2.35e-02 DIVERGE (limit 2%)
+post_ffn-3: MISSING in llama dump
+RES dump compare: check above
+== ours exit 0 (02:49:35)
+  qwen35: load done in 23.5s
+  qwen35: load done in 23.5s
+chat-it: ' vary"`だけ过户 lower lower lower lower lower lower lower lower lower lower lower lo'
+chat-en: ' Bow ----------"-号码 lower lower lower lower lower lower lower lower lower lower '
+code: 'User底部是由是由是由是由是由是由是由是由是由是由是由是由_luaң着着 fit lower lower lower lower lower'
+raw: '间接脚 petite_required_required covering covering covering covering.static 정ธodd地形就'
+== diff strict exit 1 (02:49:35)
+chat-it  same greedy tokens 0/24, max |dp| top-10 0.0000, mean partial KL 0.00e+00
+   ref:  'The user is asking in Italian: "What is the capital of Italy? Answer in one sentence."\n\nThe capital '
+   ours: ' vary"`だけ过户 lower lower lower lower lower lower lower lower lower lower lower lower lower裁 lower low'
+chat-en  same greedy tokens 0/24, max |dp| top-10 0.0000, mean partial KL 0.00e+00
+   ref:  'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+   ours: ' Bow ----------"-号码 lower lower lower lower lower lower lower lower lower lower lower lower lower lo'
+code     same greedy tokens 0/24, max |dp| top-10 0.0000, mean partial KL 0.00e+00
+   ref:  '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+   ours: 'User底部是由是由是由是由是由是由是由是由是由是由是由是由_luaң着着 fit lower lower lower lower lower'
+raw      same greedy tokens 0/24, max |dp| top-10 0.0000, mean partial KL 0.00e+00
+   ref:  ' Octavian, the adopted son of Julius Caesar, was granted the title Augustus by the Roman Senate. Thi'
+   ours: '间接脚 petite_required_required covering covering covering covering.static 정ธodd地形就能就能就能-custom Bild Se'
+C8 FAIL: chat-it: greedy diverges at step 0 but the reference gap is 0.505 >= 0.15 (not a near-tie)
+C8 FAIL: chat-en: greedy diverges at step 0 but the reference gap is 0.941 >= 0.15 (not a near-tie)
+C8 FAIL: code: greedy diverges at step 0 but the reference gap is 0.983 >= 0.15 (not a near-tie)
+C8 FAIL: greedy-identical prompts: 0/4, 3 required
+C8 strict: FAIL
+== ppl exit 0 (02:51:03)
+Final estimate: PPL = 759165.2958 +/- 32093.95932  (2040 scored tokens, 15.9s)
+RES ppl ours 759165.2958 ref 1.0166 rel 74676793.154% (limit 1%)
+== ppl compare exit 1 (02:51:03)
+== summary: pytest=0 dump=0 odump=0 dumpcmp=1 ours=0 diff=1 ppl=0 pplcmp=1
+== end 02:51:03
