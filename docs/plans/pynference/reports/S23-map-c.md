@@ -107,9 +107,8 @@ nullptr, nullptr, -1)` — same low-rank mixer, NO inject branch; GGUF names
 
 ## Notes for S24/S26
 
-- PLE dumps are NOT in the S23-1 targets (layer 0 + first QSA layer per the
-  card); if S24 needs `ple_*` tensors, ask for a blk.1 dump — add
-  `--dump-layer 1` style coverage when defining the job.
+- Job S23-1 dumps one short prompt in a single eval, so every layer is
+  covered, including blk.1: `ple_*` tensors for S24 are in the dump.
 - `ffn_moe_weights` order follows `argsort_top_k` (sorted by score desc);
   weights are a bag over experts — compare the (expert, weight) SET, and
   beware score ties (F32 router, deterministic softmax should match bitwise).
