@@ -1,0 +1,23 @@
+== start 19:38:16
+== kernels_selftest exit 0 (19:38:22)
+qsa_attn_decode Hq=4 Hkv=2 D=32 M=40: 1.19e-07
+qsa_attn_decode Hq=24 Hkv=2 D=256 M=2054: 8.94e-08
+== gpu_qsa_ctx exit 1 (19:38:39)
+.drift prefill T=2046: 1.52e-04 near-tie 0/2046
+.drift prefill T=2058: 1.35e-04 near-tie 7/2058
+            kc, a, drift = _check_cross(pf, pg, of, og, qsa_c.n_top_pool,
+                print(f"drift decode N={n}: {drift:.2e} near-tie "
+            kept = int(kc.sum())
+>               assert kept == n, f"N={n}: expected causal prefix ({n} cells), got {kept}"
+FAILED tests/gpu/test_qwen4exp_qsa_ctx.py::test_prefill_long_context_selects
+FAILED tests/gpu/test_qwen4exp_qsa_ctx.py::test_decode_across_top_k_boundary
+2 failed, 2 passed in 16.54s
+== gpu_all exit 1 (19:42:35)
+FAILED tests/gpu/test_qwen4exp_qsa_ctx.py::test_prefill_long_context_selects
+FAILED tests/gpu/test_qwen4exp_qsa_ctx.py::test_decode_across_top_k_boundary
+2 failed, 142 passed, 1 skipped, 1 warning in 235.11s (0:03:55)
+== regress exit 0 (19:44:17)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 13.0s)
+PASS
+PASS
+== summary: kernels_selftest 0 gpu_qsa_ctx 1 gpu_all 1 regress 0

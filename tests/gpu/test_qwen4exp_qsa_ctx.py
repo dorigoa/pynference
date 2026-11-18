@@ -206,7 +206,10 @@ def test_prefill_long_context_selects():
     T = 2058
     kc = _prefill(*qsa_pair(seed=12, **REAL), T=T)
     counts = kc.sum(1)
-    assert torch.equal(counts[:100], torch.arange(1, 100))  # still causal early on
+    # token t keeps t+1 cells while selection cannot prune (t <= 2050):
+    # the first 100 tokens must hold the counts 1..100 (job S25-4: a 99-element
+    # arange(1, 100) here is a shape bug in the test, not the code)
+    assert torch.equal(counts[:100], torch.arange(1, 101))  # still causal early on
     tail = torch.tensor([0 if t % 4 == 3 else t % 4 + 1 for t in range(2051, T)])
     assert torch.equal(counts[2051:], 2048 + tail)
 
@@ -222,7 +225,7 @@ def test_decode_across_top_k_boundary():
     _, st_c, _ = qsa_c.forward(cur, torch.arange(T0), qsa_c.zero_state())
     _, st_g, _ = qsa_g.forward(cur.to(DEV), torch.arange(T0).to(DEV),
                                qsa_g.zero_state(DEV))
-    n = n_amb = 0
+    n = n_amb = kept = 0
     for i in range(T0, T1):
         step = torch.randn(1, REAL["C"]) * 0.05
         pos = torch.tensor([i])
@@ -230,18 +233,19 @@ def test_decode_across_top_k_boundary():
         og, st_g, pg = qsa_g.decode(step.to(DEV), pos.to(DEV), st_g)
         og, pg = og.cpu(), {k: v.cpu() for k, v in pg.items()}
         n += 1
+        N = T0 + n        # context length after this step; kept counts cells
         kc, a, drift = _check_cross(pf, pg, of, og, qsa_c.n_top_pool,
-                                    f"decode N={n}")
+                                    f"decode N={N}")
         if a:
             n_amb += 1
-            print(f"drift decode N={n}: {drift:.2e} near-tie "
+            print(f"drift decode N={N}: {drift:.2e} near-tie "
                   "(keep-set/output skipped, counted)")
         kept = int(kc.sum())
-        if n <= 2051:
-            assert kept == n, f"N={n}: expected causal prefix ({n} cells), got {kept}"
+        if N <= 2051:
+            assert kept == N, f"N={N}: expected causal prefix ({N} cells), got {kept}"
         else:
-            tail = 0 if n % 4 == 0 else (n - 1) % 4 + 1
-            assert kept == 2048 + tail, f"N={n}: expected 2048+{tail}, got {kept}"
-    assert kept < n, "selection never pruned below the causal prefix"
-    print(f"decode boundary: kept {n} -> {kept} cells; near-tie {n_amb}/{n - T0}")
+            tail = 0 if N % 4 == 0 else (N - 1) % 4 + 1
+            assert kept == 2048 + tail, f"N={N}: expected 2048+{tail}, got {kept}"
+    assert kept < N, "selection never pruned below the causal prefix"
+    print(f"decode boundary: kept {kept} cells at N={N}; near-tie {n_amb}/{n}")
     assert n_amb <= (T1 - T0) // 4, "selection near-tie across devices too often"
