@@ -459,16 +459,22 @@ class GPTOss:
     # for; 11 GiB leaves the store ~20 GB, ~2 GiB below the death zone.
     EXPERT_GPU_OVERHEAD_BYTES = 11 << 30
 
-    # Host-RAM cap (S17, job S17-6 diagnosis): the xe driver holds system
-    # RAM for the GPU ~1:1 — memdiag at load end showed GPUActive 40.24 GiB
-    # ~= the two ranks' torch reservations with store_pinned 0, and prefill
-    # added another +12.7 GiB before the kernel's global OOM killer fired on
-    # this ~60 GiB machine. On such a host the host, not the GPU, is the
-    # binding constraint: keep the total store across all ranks inside
-    # MemTotal - EXPERT_HOST_RESERVE_BYTES, the reserve covering driver
-    # anon state, heaps, page tables, prefill/decode transients and margin.
-    # 24 GiB leaves a ~16 GB store per rank here (~55% experts resident).
-    EXPERT_HOST_RESERVE_BYTES = 24 << 30
+    # Host-RAM cap (S17, job S17-6 diagnosis; S26, jobs S26-1..4): with the
+    # default allocator the xe driver holds system RAM for the GPU ~1:1 —
+    # memdiag at load end showed GPUActive 40.24 GiB ~= the two ranks' torch
+    # reservations with store_pinned 0, and prefill added another +12.7 GiB
+    # before the kernel's global OOM killer fired on this ~60 GiB machine.
+    # So the host, not the GPU, was the binding constraint and the 24 GiB
+    # reserve (MemTotal - reserve shared across ranks) left a ~16 GB store
+    # per rank here (~55% experts resident). S26 lifted the mirror for the
+    # store buffers: moe.ExpertStore allocates them under
+    # `expandable_segments:True` and switches the setting back off before
+    # any collective (job S26-3: oneCCL cannot register expandable buffers,
+    # the surgical window is the green path). The reserve now covers only
+    # driver anon state, heaps, page tables, the pinned ring, the pageable
+    # H2D source at load and margin: 16 GiB, so the measured device cap
+    # (EXPERT_GPU_OVERHEAD_BYTES, unchanged) is what binds the store here.
+    EXPERT_HOST_RESERVE_BYTES = 16 << 30
 
     def _expert_budget(self, dense: int, kv: int, scratch: int,
                        host_total: int | None = None) -> int:

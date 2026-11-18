@@ -1,0 +1,74 @@
+== start 22:11:35
+MemAvailable:   60715884 kB
+GPUActive:          4056 kB
+== ccl_probe.py compiles
+-- probe ctrl env: none (22:11:35)
+   exit 0 (22:11:52)
+MARK ctrl r1 import-ok settings=
+MARK ctrl r0 import-ok settings=
+MARK ctrl r1 pginit-okMARK ctrl r0 pginit-ok
+MARK ctrl r0 ar1-okMARK ctrl r1 ar1-ok
+MARK ctrl r1 big-alloc dGPUActive=+16.02 dMemAvail=-15.75 reserved=8.00
+MARK ctrl r0 big-alloc dGPUActive=+16.02 dMemAvail=-15.75 reserved=8.00
+MARK ctrl r0 big-h2d dGPUActive=+16.00 dMemAvail=-31.49 reserved=8.00
+MARK ctrl r1 big-h2d dGPUActive=+16.00 dMemAvail=-31.43 reserved=8.00
+MARK ctrl r0 big-kernel dGPUActive=+16.00 dMemAvail=-15.90 reserved=8.00
+MARK ctrl r1 big-kernel dGPUActive=+16.02 dMemAvail=-15.76 reserved=8.00
+MARK ctrl r1 ar2-ok sum=2.0MARK ctrl r0 ar2-ok sum=2.0
+VERDICT ctrl r0 ok=1
+VERDICT ctrl r1 ok=1
+-- probe global PYTORCH_ALLOC_CONF=expandable_segments:True (22:11:52)
+   exit 1 (22:11:57)
+MARK global r1 import-ok settings=expandable_segments:True
+MARK global r0 import-ok settings=expandable_segments:True
+MARK global r0 pginit-okMARK global r1 pginit-ok
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 384, in wrapper
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+  error_file: <N/A>
+  error_file: <N/A>
+-- probe setter env: none (22:11:57)
+   exit 0 (22:12:05)
+MARK setter r1 import-ok settings=
+MARK setter r0 import-ok settings=
+MARK setter r0 pginit-ok
+MARK setter r1 pginit-ok
+MARK setter r0 ar1-ok
+MARK setter r0 setter:expandable_segments:True settings=expandable_segments:True
+MARK setter r1 ar1-ok
+MARK setter r1 setter:expandable_segments:True settings=expandable_segments:True
+MARK setter r1 big-alloc dGPUActive=+0.00 dMemAvail=-0.05 reserved=8.01
+MARK setter r0 big-alloc dGPUActive=+0.00 dMemAvail=-0.05 reserved=8.01
+MARK setter r1 big-h2d dGPUActive=+0.00 dMemAvail=-16.20 reserved=8.01
+MARK setter r0 big-h2d dGPUActive=+0.00 dMemAvail=-16.17 reserved=8.01
+MARK setter r1 big-kernel dGPUActive=+0.00 dMemAvail=-0.96 reserved=8.01
+MARK setter r1 setter:expandable_segments:False settings=expandable_segments:False
+MARK setter r0 big-kernel dGPUActive=+0.02 dMemAvail=-0.98 reserved=8.01
+MARK setter r0 setter:expandable_segments:False settings=expandable_segments:False
+MARK setter r1 ar2-ok sum=2.0MARK setter r0 ar2-ok sum=2.0
+VERDICT setter r1 ok=1VERDICT setter r0 ok=1
+-- probe setterkeep env: none (22:12:05)
+   exit 1 (22:12:15)
+MARK setterkeep r1 import-ok settings=
+MARK setterkeep r0 import-ok settings=
+MARK setterkeep r1 pginit-ok
+MARK setterkeep r0 pginit-ok
+MARK setterkeep r0 ar1-ok
+MARK setterkeep r0 setter:expandable_segments:True settings=expandable_segments:True
+MARK setterkeep r1 ar1-ok
+MARK setterkeep r1 setter:expandable_segments:True settings=expandable_segments:True
+MARK setterkeep r1 big-alloc dGPUActive=+0.00 dMemAvail=-0.05 reserved=8.01
+MARK setterkeep r0 big-alloc dGPUActive=+0.00 dMemAvail=-0.05 reserved=8.01
+MARK setterkeep r0 big-h2d dGPUActive=+0.00 dMemAvail=-16.20 reserved=8.01
+MARK setterkeep r1 big-h2d dGPUActive=+0.00 dMemAvail=-16.20 reserved=8.01
+MARK setterkeep r0 big-kernel dGPUActive=+0.00 dMemAvail=-0.93 reserved=8.01
+MARK setterkeep r1 big-kernel dGPUActive=+0.00 dMemAvail=-0.93 reserved=8.01
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 384, in wrapper
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+  error_file: <N/A>
+  error_file: <N/A>
+== NO LEVER: neither global nor setter green under CCL (22:12:15)
+MemAvailable:   60453476 kB
+GPUActive:          3848 kB
+== end 22:12:15

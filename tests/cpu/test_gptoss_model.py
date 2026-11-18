@@ -323,9 +323,11 @@ def test_expert_budget_falls_back_to_d8_without_mem_get_info(monkeypatch):
 
 
 def test_expert_budget_capped_by_host_ram():
-    """Job S17-6: GPUActive ~= the sum of the ranks' torch reservations, so
-    every store byte also costs host RAM: cap the total store across the
-    world at (MemTotal - EXPERT_HOST_RESERVE_BYTES) - dense - kv - scratch."""
+    """Job S17-6: with the default (mirrored) allocator every store byte
+    also costs host RAM: cap the total store across the world at
+    (MemTotal - EXPERT_HOST_RESERVE_BYTES) - dense - kv - scratch. S26
+    lifted the mirror for the store buffers (smaller reserve), so the cap
+    only binds when the host is genuinely tight, as in this scenario."""
     m = _stub(seed=59)
     m.tp.world = 2
     host_total = 60 << 30
@@ -337,17 +339,34 @@ def test_expert_budget_capped_by_host_ram():
 
 def test_expert_budget_host_cap_when_gpus_visible(monkeypatch):
     """With GPUs visible the cap reads /proc/meminfo; a huge device total
-    must not override the host cap (the S17-6 machine: 31 GiB VRAM/GPU,
-    ~60 GiB RAM, two ranks)."""
+    must not override the host cap on a genuinely tight host (~40 GiB RAM
+    here: S26 shrank the reserve to 16 GiB because the store no longer
+    mirrors RAM, so only a tight host keeps the cap binding)."""
     monkeypatch.setattr(torch.xpu, "device_count", lambda: 1)
-    monkeypatch.setattr(gptoss, "read_mem_total_bytes", lambda: 50 << 30)
+    monkeypatch.setattr(gptoss, "read_mem_total_bytes", lambda: 40 << 30)
     monkeypatch.setattr(torch.xpu, "empty_cache", lambda: None)
     monkeypatch.setattr(torch.xpu, "mem_get_info",
                         lambda dev: (40_000_000_000, 40_000_000_000), raising=False)
     m = _stub(seed=61)
-    want = ((50 << 30) - GPTOss.EXPERT_HOST_RESERVE_BYTES) // 1 - DENSE - KV - SCRATCH
+    want = ((40 << 30) - GPTOss.EXPERT_HOST_RESERVE_BYTES) // 1 - DENSE - KV - SCRATCH
     gpu_cap = 40_000_000_000 - GPTOss.EXPERT_GPU_OVERHEAD_BYTES - DENSE - KV - SCRATCH
     assert want < PLAN0 and want < gpu_cap
+    assert m._expert_budget(DENSE, KV, SCRATCH) == want
+
+
+def test_expert_budget_device_cap_binds_after_s26(monkeypatch):
+    """S26 regime on this PC (2x32 GiB VRAM, ~64 GiB RAM, world=1): with the
+    16 GiB reserve the host cap no longer binds a 32 GiB device — the
+    measured device cap (EXPERT_GPU_OVERHEAD_BYTES) does."""
+    monkeypatch.setattr(torch.xpu, "device_count", lambda: 1)
+    monkeypatch.setattr(gptoss, "read_mem_total_bytes", lambda: 64 << 30)
+    monkeypatch.setattr(torch.xpu, "empty_cache", lambda: None)
+    monkeypatch.setattr(torch.xpu, "mem_get_info",
+                        lambda dev: (32 << 30, 32 << 30), raising=False)
+    m = _stub(seed=67)
+    host_cap = ((64 << 30) - GPTOss.EXPERT_HOST_RESERVE_BYTES) // 1 - DENSE - KV - SCRATCH
+    want = (32 << 30) - GPTOss.EXPERT_GPU_OVERHEAD_BYTES - DENSE - KV - SCRATCH
+    assert want < host_cap
     assert m._expert_budget(DENSE, KV, SCRATCH) == want
 
 

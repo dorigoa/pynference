@@ -29,6 +29,45 @@ from .quant import gemv_indexed, row_bytes
 PINNED_LIMIT_BYTES = 80 * (1 << 30)  # C5: at most 80 GB of pinned RAM total
 
 
+# ---------------------------------------------------------- allocator setting
+#
+# S26 (jobs S26-1..3): the default torch-XPU allocator mirrors host RAM ~1:1
+# for every device allocation (S26-1: GPUActive ~= reserved and MemAvailable
+# ~= -allocated at 8 and 24 GiB, with every knob the xe stack exposes). The
+# generic allocator setting `expandable_segments:True` removes the mirror
+# (S26-2: 24 GiB reserved costs ~0.2 GiB of host, H2D and kernels fine) —
+# but oneCCL cannot register buffers that live in expandable segments: with
+# the setting on for the whole process the run SIGABRTs under torchrun
+# (S26-3 `global`), a buffer newly allocated while the setting is on and
+# then handed to a collective aborts too (`setterkeep`), while toggling it
+# on around a private buffer and back off before the next collective passes
+# cleanly (`setter`, exit 0 both ranks). So ExpertStore turns the setting on
+# only around its resident+swap buffers — which no collective ever touches,
+# collectives see only the ordinary-memory outputs of the kernels that read
+# them — and off again before anything else can allocate.
+
+def _expandable_segments_supported() -> bool:
+    """True if torch exposes the generic allocator-settings setter (torch
+    2.15+xpu does) and XPU devices are visible."""
+    return (hasattr(torch._C, "_accelerator_setAllocatorSettings")
+            and torch.xpu.device_count() > 0)
+
+
+def _set_expandable_segments(on: bool) -> bool:
+    """Toggle `expandable_segments` on the default allocator and drop cached
+    blocks, so later allocations actually use the new policy (empty_cache
+    matters both ways: a block cached under the other policy could be reused
+    for the wrong buffer — expandable segments must not reach a collective).
+    Returns True on success."""
+    try:
+        torch._C._accelerator_setAllocatorSettings(
+            "expandable_segments:True" if on else "expandable_segments:False")
+        torch.xpu.empty_cache()
+    except (AttributeError, RuntimeError):
+        return False
+    return True
+
+
 # ------------------------------------------------------------- expert ownership
 
 def expert_owner(e: int, world: int) -> int:
@@ -357,6 +396,17 @@ class ExpertStore:
             raise ValueError("ExpertStore: all layers must have the same local expert count")
 
         R, X = plan_residency(triples, n_locals.pop(), budget_bytes, swap_slots)
+        # S26: allocate the big buffers without the host-RAM mirror (see the
+        # allocator-setting note above). Anything allocated after this window
+        # — slot-index tensors, CCL buffers, everything else in the process —
+        # is back under the ordinary policy, which is what oneCCL needs.
+        self.no_mirror = False
+        if str(tp.device).startswith("xpu") and _expandable_segments_supported():
+            self.no_mirror = _set_expandable_segments(True)
+            if verbose:
+                print("  store: expandable_segments "
+                      f"{'on (no host-RAM mirror, S26)' if self.no_mirror else 'OFF (fallback: mirrored allocations)'}",
+                      flush=True)
         self.bufs: dict[int, dict[str, torch.Tensor]] = {}
         self.pools: dict[tuple[int, str], HostPool] = {}
         self.maps: dict[int, SlotMap] = {}
@@ -383,6 +433,12 @@ class ExpertStore:
                 pinned += pool.nbytes
                 self.pools[layer, name] = pool
             self.bufs[layer] = bufs
+        if self.no_mirror and not _set_expandable_segments(False):
+            # Leaving the setting on would hand the next collective an
+            # expandable buffer it cannot register (S26-3 `setterkeep`
+            # SIGABRT): fail loudly instead of crashing in CCL later.
+            raise RuntimeError(
+                "ExpertStore: could not restore the allocator setting")
         if pinned > PINNED_LIMIT_BYTES:
             raise ValueError(f"pinned RAM {pinned} B exceeds the C5 limit {PINNED_LIMIT_BYTES}")
         self._pinned = pinned
