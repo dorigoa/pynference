@@ -279,6 +279,53 @@ def decode(x_new, conv_state, w, g, beta, state, n_key_heads, qk_eps=1e-6):
     return out
 
 
+# --------------------------------------------------- fused decode gates / norm (S22)
+@triton.jit
+def _delta_gates_k(AB, A_LOG, DT, G, BETA, H, BLOCK: tl.constexpr):
+    """g = a_log * softplus(alpha + dt_bias), beta = sigmoid(beta_raw) (Mappa
+    A.4); the softplus threshold 20 matches F.softplus. AB [2H] = [alpha |
+    beta], one token's rows of the merged `alpha_beta` projection."""
+    i = tl.arange(0, BLOCK)
+    m = i < H
+    x = tl.load(AB + i, mask=m, other=0.0) + tl.load(DT + i, mask=m, other=0.0)
+    sp = tl.where(x > 20.0, x, tl.log(1.0 + tl.exp(x)))
+    tl.store(G + i, tl.load(A_LOG + i, mask=m, other=0.0) * sp, mask=m)
+    tl.store(BETA + i, tl.sigmoid(tl.load(AB + H + i, mask=m, other=0.0)), mask=m)
+
+
+def gates(ab, a_log, dt_bias):
+    """(g, beta), each [H_v], replacing the torch chain the S21 decode used."""
+    H = a_log.shape[0]
+    g = torch.empty(H, dtype=torch.float32, device=ab.device)
+    beta = torch.empty_like(g)
+    _delta_gates_k[(1,)](ab, a_log, dt_bias, g, beta, H, BLOCK=_np2(H), num_warps=4)
+    return g, beta
+
+
+@triton.jit
+def _norm_gated_k(Y, Z, W, OUT, S, eps, stride_z, BLOCK_S: tl.constexpr):
+    """Per-head RMSNorm over S channels with weight, gated by SiLU — the
+    decode shape (one program per value head); `z` may be a row-strided
+    view of the [H_v, S] `attn_gate` GEMV output."""
+    h = tl.program_id(0)
+    s = tl.arange(0, BLOCK_S)
+    m = s < S
+    y = tl.load(Y + h * S + s, mask=m, other=0.0)
+    z = tl.load(Z + h * stride_z + s, mask=m, other=0.0)
+    n = y * tl.rsqrt(tl.sum(y * y, 0) / S + eps) * tl.load(W + s, mask=m, other=0.0)
+    tl.store(OUT + h * S + s, n * z * tl.sigmoid(z), mask=m)
+
+
+def norm_gated_decode(y, z, w_norm, eps, out=None):
+    """`norm_gated` for one token: y/z [H_v, S] float32 (z rows may stride
+    over a wider GEMV output), same result as the torch `norm_gated`."""
+    H_v, S = y.shape
+    out = torch.empty(H_v, S, dtype=torch.float32, device=y.device) if out is None else out
+    _norm_gated_k[(H_v,)](y, z, w_norm, out, S, eps, z.stride(0),
+                          BLOCK_S=_np2(S), num_warps=4)
+    return out
+
+
 # ----------------------------------------------------------------- prefill kernel
 @triton.jit
 def _conv_prefill_k(X, ST, STN, W, Y, T, C, stride_x, stride_st, stride_stn,

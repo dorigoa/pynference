@@ -203,6 +203,7 @@ class Qwen35:
             if tp.is_main and (il + 1) % 10 == 0:
                 print(f"  loaded {il + 1}/{c.n_layer} layers ({time.time() - t0:.0f}s)", flush=True)
         self.reset()
+        self._init_decode()
         self._weights_bytes, self._scratch_bytes = self._dense_bytes, 0
         torch.xpu.synchronize(dev)
         self.load_seconds = time.time() - t0
@@ -253,6 +254,25 @@ class Qwen35:
         self._dense_bytes += raw.nbytes
         return QLinear.from_q8_0(raw, raw.shape[0], raw.shape[1] // 34 * 32, self.tp.device)
 
+    def _q_rows_multi(self, parts):
+        """One QLinear [sum N, K] from the output rows of several same-K Q8_0
+        tensors (S22 merged GEMVs: ffn gate|up, ssm alpha|beta). Q8_0 blocks
+        are row-local, so raw-row concatenation across tensors is exact."""
+        from ..quant import QLinear
+        raws = []
+        for name, runs in parts:
+            self._check_q8(name)
+            raws.append(np.concatenate([self.g.rows(name, a, a + l) for a, l in runs], axis=0))
+        raw = np.concatenate(raws, axis=0)
+        self._dense_bytes += raw.nbytes
+        return QLinear.from_q8_0(raw, raw.shape[0], raw.shape[1] // 34 * 32, self.tp.device)
+
+    def _rows_view(self, lin, a: int, b: int):
+        """Rows [a, b) of a QLinear as a sub-QLinear (zero copy: QLinear is
+        just qs int8 [N, K] + d fp16 [N, K/32], both row-indexable)."""
+        from ..quant import QLinear
+        return QLinear(lin.qs[a:b], lin.d[a:b])
+
     def _load_layer(self, il: int) -> _Layer:
         c, tp = self.cfg, self.tp
         p = f"blk.{il}."
@@ -261,8 +281,13 @@ class Qwen35:
         L.attn_norm = self._f32(p + "attn_norm.weight")
         L.post_attn_norm = self._f32(p + "post_attention_norm.weight")
         fr = split_run(c.ffn, tp.world, tp.rank)          # 8704 = 34 x 256, Q8_0-safe
-        L.ffn_gate = self._q_rows(p + "ffn_gate.weight", [fr])
-        L.ffn_up = self._q_rows(p + "ffn_up.weight", [fr])
+        # S22 C9: one merged gate|up GEMV for decode; the prefill path keeps
+        # the separate gate/up weights as zero-copy row slices of the same
+        # storage, so `dense_prefill` numerics stay bit-identical to S21.
+        L.gate_up = self._q_rows_multi([(p + "ffn_gate.weight", [fr]),
+                                        (p + "ffn_up.weight", [fr])])
+        L.ffn_gate = self._rows_view(L.gate_up, 0, fr[1])
+        L.ffn_up = self._rows_view(L.gate_up, fr[1], 2 * fr[1])
         L.ffn_down = self._q_cols(p + "ffn_down.weight", [fr])
         if L.is_attn:
             # heads split contiguously: rank r takes heads r*n_head_l.., the
@@ -272,6 +297,11 @@ class Qwen35:
             L.v = self._q_rows(p + "attn_v.weight", [split_run(c.n_head_kv * c.head_dim, tp.world, tp.rank)])
             L.q_norm = self._f32(p + "attn_q_norm.weight")
             L.k_norm = self._f32(p + "attn_k_norm.weight")
+            # decode: attn_decode scores at scale 1.0 (gemma4 convention), so
+            # 1/sqrt(head_dim) rides into the q-norm weight; head_dim 256
+            # makes it 2**-4, exact in fp32, so norm_rope(q, q_norm * scale)
+            # is bit-identical to the S21 scale-after-norm chain.
+            L.q_norm_dec = L.q_norm * self._scale
             L.o = self._q_cols(p + "attn_output.weight", [split_run(c.n_head * c.head_dim, tp.world, tp.rank)])
         else:
             qkv_runs, value_runs, head_ids, head_rows = qkv_parity_runs(
@@ -284,8 +314,11 @@ class Qwen35:
                                        c.conv_kernel), chans)   # rows [channel, tap]
             L.ssm_a = self._f32_gather(p + "ssm_a", None, head_ids)
             L.dt_bias = self._f32_gather(p + "ssm_dt.bias", None, head_ids)
-            L.alpha = self._q_rows(p + "ssm_alpha.weight", head_rows)
-            L.beta = self._q_rows(p + "ssm_beta.weight", head_rows)
+            L.alpha_beta = self._q_rows_multi([(p + "ssm_alpha.weight", head_rows),
+                                               (p + "ssm_beta.weight", head_rows)])
+            nv = len(head_rows)                              # one GEMV (S22), rows [alpha | beta]
+            L.alpha = self._rows_view(L.alpha_beta, 0, nv)     # prefill-only slices
+            L.beta = self._rows_view(L.alpha_beta, nv, 2 * nv)
             L.ssm_out = self._q_cols(p + "ssm_out.weight", value_runs)
             L.ssm_norm = self._f32(p + "ssm_norm.weight")
         return L
@@ -363,24 +396,6 @@ class Qwen35:
         y = deltanet.norm_gated(y, z.view(T, Hv, S), L.ssm_norm, c.eps)
         return tp.all_reduce(dense_prefill(L.ssm_out, y.reshape(T, -1)))
 
-    def _layer_recurrent_decode(self, il: int, x: torch.Tensor) -> torch.Tensor:
-        """Decode twin of `_layer_recurrent`: x [1, n_embd] -> [1, n_embd].
-        QLinear GEMVs (fp32 at M=1) + `deltanet.decode`."""
-        from .. import deltanet
-        c, L, tp = self.cfg, self.layers[il], self.tp
-        S, Hv = c.ssm_state, self.n_value_l
-        conv_state, state = self.cache[il]
-        h = rms_norm(x, L.attn_norm, c.eps)
-        qkv = L.qkv(h)                                      # [1, _qkv_l]
-        z = L.gate(h)
-        alpha = L.alpha(h)
-        beta = torch.sigmoid(L.beta(h))
-        g = L.ssm_a * F.softplus(alpha + L.dt_bias)
-        y = deltanet.decode(qkv[0], conv_state, L.conv, g[0], beta[0], state,
-                            self.n_key_l, qk_eps=c.eps)     # [Hv, S]
-        y = deltanet.norm_gated(y, z[0].view(Hv, S), L.ssm_norm, c.eps)
-        return tp.all_reduce(L.ssm_out(y.view(1, -1)))
-
     # ---- dense SwiGLU FFN (Mappa B.7/8), shared by both paths ----
     def _ffn(self, il: int, x: torch.Tensor) -> torch.Tensor:
         """post_attention_norm + SwiGLU FFN (fp32) + all-reduce:
@@ -390,12 +405,6 @@ class Qwen35:
         g = dense_prefill(L.ffn_gate, h)
         u = dense_prefill(L.ffn_up, h)
         return tp.all_reduce(dense_prefill(L.ffn_down, F.silu(g) * u))
-
-    def _ffn_decode(self, il: int, x: torch.Tensor) -> torch.Tensor:
-        """Decode twin of `_ffn`: x [1, n_embd] -> [1, n_embd] float32."""
-        L, tp = self.layers[il], self.tp
-        h = rms_norm(x, L.post_attn_norm, self.cfg.eps)
-        return tp.all_reduce(L.ffn_down(F.silu(L.ffn_gate(h)) * L.ffn_up(h)))
 
     # ---- full attention layer (S21 step 3, Mappa B) ----
     def _attention(self, il: int, q, k, v, pos: torch.Tensor, pos0: int) -> torch.Tensor:
@@ -433,39 +442,6 @@ class Qwen35:
         a = a * torch.sigmoid(gate).reshape(T, Hq * D)
         return tp.all_reduce(dense_prefill(L.o, a))
 
-    # ---- full attention layer, decode (T == 1) ----
-    def _attention_decode(self, il: int, q, k, v, pos: torch.Tensor) -> torch.Tensor:
-        """q [1, Hq, D]; k, v [1, Hkv, D], already normed and roped; pos [1]
-        int tensor = absolute position. Stores k/v at slot `pos` and runs
-        `kernels.attn_decode` over slots 0..pos. The kernel scores at scale
-        1.0 by design (gemma4 convention), so q carries the 1/sqrt(D) here
-        (same as gpt-oss). Returns [Hq, D] float32."""
-        from .. import kernels as K   # Triton at call time only: module header note
-        kc, vc = self.cache[il]
-        Hq, D = q.shape[1], q.shape[2]
-        kc.index_copy_(1, pos, k.transpose(0, 1).to(kc.dtype))
-        vc.index_copy_(1, pos, v.transpose(0, 1).to(vc.dtype))
-        return K.attn_decode((q * self._scale).reshape(Hq, D), kc, vc,
-                             pos + 1, self._nsp_full, self._split_full)
-
-    def _layer_attn_decode(self, il: int, x: torch.Tensor, pos: torch.Tensor) -> torch.Tensor:
-        """Decode twin of `_layer_attn`: x [1, n_embd] -> [1, n_embd] float32."""
-        c, L, tp = self.cfg, self.layers[il], self.tp
-        Hq, Hkv, D = self.n_head_l, self.n_kv_l, c.head_dim
-        h = rms_norm(x, L.attn_norm, c.eps)
-        qg = L.q(h).view(1, Hq, 2 * D)
-        q, gate = qg[..., :D], qg[..., D:]
-        k = L.k(h).view(1, Hkv, D)
-        v = L.v(h).view(1, Hkv, D)
-        q = rms_norm(q, L.q_norm, c.eps)
-        k = rms_norm(k, L.k_norm, c.eps)
-        cos, sin = self.cos[pos], self.sin[pos]
-        q = rope_neox(q, cos, sin)
-        k = rope_neox(k, cos, sin)
-        a = self._attention_decode(il, q, k, v, pos)   # [Hq, D]
-        a = a * torch.sigmoid(gate[0])
-        return tp.all_reduce(L.o(a.view(1, Hq * D)))
-
     # ---- C3 driver ----
     @torch.inference_mode()
     def forward(self, tokens: list[int], chunk: int = 512, all_logits: bool = False) -> torch.Tensor:
@@ -498,22 +474,113 @@ class Qwen35:
             return torch.cat(outs)
         return self.logits(x[-1:])[0]
 
+    # ---- decode (T == 1) path: fused Triton kernels, optional XPUGraph (S22) ----
+    def _init_decode(self):
+        """Static decode inputs (gemma4 pattern): written to pinned host
+        memory and copied to the device once per token, so one XPUGraph
+        replay works at any position/length."""
+        dev = self.tp.device
+        # token, position (= KV slot), keys visible to attn_decode (pos + 1).
+        # `pin_memory()` raises on the CPU test container (XPU backend
+        # compiled, zero devices), so pin only where an accelerator exists;
+        # a plain host tensor copies identically without a graph.
+        self._host = torch.zeros(3, dtype=torch.long)
+        if torch.xpu.is_available():
+            self._host = self._host.pin_memory()
+        self._dbuf = torch.zeros(3, dtype=torch.long, device=dev)
+        self._graph = None
+        self._graph_out = None
+
+    def _decode_body(self) -> torch.Tensor:
+        """One decode step, fully fused (S22 C9): every per-token op is a
+        single kernel — QLinear GEMVs, `deltanet.decode`, norm_rope into the
+        KV slot + attn_decode, `gates`/`norm_gated_decode`, `res_norm`,
+        `silu_mul_gu` — with token/position/length read from `self._dbuf`, so
+        the whole step (xccl all-reduces included) is XPUGraph-capturable.
+        The gate/up and alpha/beta projections are merged into single GEMVs
+        (prefill keeps the row slices); the attention score scale rides in
+        `q_norm_dec`. Returns logits [1, n_vocab] float32."""
+        from .. import deltanet, kernels as K   # Triton at call time: module header note
+        c, tp, eps = self.cfg, self.tp, self.cfg.eps
+        S, Hv = c.ssm_state, self.n_value_l
+        Hq, Hkv, D = self.n_head_l, self.n_kv_l, c.head_dim
+        b = self._dbuf
+        tok, pos, n_past1 = b[0:1], b[1:2], b[2:3]
+        x = self.embed_tokens(tok)
+        h = K.rms_norm(x, self.layers[0].attn_norm, eps)
+        for il, L in enumerate(self.layers):
+            if L.is_attn:
+                kc, vc = self.cache[il]
+                qg = L.q(h)                                  # [1, Hq*2D], q|gate interleaved
+                q = K.norm_rope(qg.view(1, Hq, 2 * D)[..., :D], L.q_norm_dec, eps,
+                                self.cos, self.sin, pos)     # [1, Hq, D], scale folded in
+                K.norm_rope(L.k(h).view(1, Hkv, D), L.k_norm, eps, self.cos, self.sin,
+                            pos, out=kc, slot=pos)
+                # V is cached RAW (S21 semantics): `norm_rope` always applies
+                # its RMSNorm (gemma4 caches normalized V), so the value row
+                # goes in through a plain scatter into the fp16 cache slot.
+                vc.index_copy_(1, pos, L.v(h).view(1, Hkv, D)
+                               .transpose(0, 1).to(vc.dtype))
+                a = K.attn_decode(q.view(Hq, D), kc, vc, n_past1,
+                                  self._nsp_full, self._split_full)   # [Hq, D]
+                blk = tp.all_reduce(L.o(K.sigmoid_gate(a.view(1, Hq * D), qg, D)))
+            else:
+                conv_state, state = self.cache[il]
+                qkv, z = L.qkv(h), L.gate(h)                 # [1, _qkv_l], [1, Hv*S]
+                g, beta = deltanet.gates(L.alpha_beta(h)[0], L.ssm_a, L.dt_bias)
+                y = deltanet.decode(qkv[0], conv_state, L.conv, g, beta, state,
+                                    self.n_key_l, qk_eps=eps)         # [Hv, S], 1/sqrt(S)
+                y = deltanet.norm_gated_decode(y, z.view(Hv, S), L.ssm_norm, eps)
+                blk = tp.all_reduce(L.ssm_out(y.view(1, -1)))
+            x, h = K.res_norm(x, blk, L.post_attn_norm, eps)
+            d = tp.all_reduce(L.ffn_down(K.silu_mul_gu(L.gate_up(h))))
+            w_next = self.layers[il + 1].attn_norm if il + 1 < c.n_layer else self.output_norm
+            x, h = K.res_norm(x, d, w_next, eps)
+        return tp.all_gather(self.lm_head(h))
+
     @torch.inference_mode()
     def decode(self, token: int) -> torch.Tensor:
-        """One generated token: logits [n_vocab] float32 on every rank.
-        Eager path; the XPUGraph decode is S22."""
+        """One generated token: logits [n_vocab] float32 on every rank. With
+        use_graph the step is captured on the first call and replayed
+        afterwards (the result is overwritten by the next call)."""
         if self.n_past >= self.max_ctx:
             raise ValueError(f"context full ({self.n_past} >= {self.max_ctx})")
-        dev = self.tp.device
-        pos = torch.tensor([self.n_past], dtype=torch.long, device=dev)
+        pos = self.n_past
+        self._host[0], self._host[1], self._host[2] = token, pos, pos + 1
+        self._dbuf.copy_(self._host)
+        if not self.use_graph:
+            out = self._decode_body()
+        else:
+            if self._graph is None:
+                self._capture()
+            self._graph.replay()
+            out = self._graph_out
         self.n_past += 1
-        x = self.embed_tokens(torch.tensor([token], dtype=torch.long, device=dev))
-        for il in range(self.cfg.n_layer):
-            blk = (self._layer_attn_decode(il, x, pos) if self.layers[il].is_attn
-                   else self._layer_recurrent_decode(il, x))
-            x = x + blk
-            x = x + self._ffn_decode(il, x)
-        return self.logits(x)[0]
+        return out[0]
+
+    def _capture(self):
+        """gemma4's side-stream warm-up + capture, with one qwen35 extra: the
+        DeltaNet conv histories and delta states update **in place**, so the
+        warm-up runs corrupt them (KV slots are harmless: the replay rewrites
+        the same pos). Snapshot before the warm-up, restore after — the
+        capture itself only records."""
+        dev = self.tp.device
+        states = [e for L, e in zip(self.layers, self.cache) if not L.is_attn]
+        snaps = [(e[0].clone(), e[1].clone()) for e in states]
+        s = torch.xpu.Stream(dev)
+        s.wait_stream(torch.xpu.current_stream(dev))
+        with torch.xpu.stream(s):          # warm-up: Triton compile/autotune, allocator pools
+            for _ in range(2):
+                self._decode_body()
+        torch.xpu.current_stream(dev).wait_stream(s)
+        torch.xpu.synchronize(dev)
+        g = torch.xpu.XPUGraph()
+        with torch.xpu.graph(g):
+            self._graph_out = self._decode_body()
+        self._graph = g
+        for e, (cs, st) in zip(states, snaps):    # undo the warm-up's state updates
+            e[0].copy_(cs)
+            e[1].copy_(st)
 
     def memory_report(self) -> dict:
         """Bytes on this GPU (C3)."""

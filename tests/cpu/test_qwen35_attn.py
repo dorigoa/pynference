@@ -67,6 +67,18 @@ def _lin(n, k, scale=0.05):
     return lin
 
 
+class _LinView:
+    """Rows [a, b) of a Linear as a callable — the stub twin of the real
+    zero-copy `QLinear` row slices (S22: merged gate|up and alpha|beta
+    tensors, prefill/reference consume the slices)."""
+
+    def __init__(self, lin, a, b):
+        self.lin, self.a, self.b = lin, a, b
+
+    def __call__(self, x):
+        return F.linear(x, self.lin.weight[self.a:self.b])
+
+
 def _make_model(seed=0, is_attn=(True, True, True)):
     torch.manual_seed(seed)
     m = Qwen35.__new__(Qwen35)
@@ -87,16 +99,20 @@ def _make_model(seed=0, is_attn=(True, True, True)):
         L.is_attn = attn
         L.attn_norm = torch.ones(N_EMBD)
         L.post_attn_norm = torch.ones(N_EMBD)
-        L.ffn_gate, L.ffn_up = _lin(FFN, N_EMBD), _lin(FFN, N_EMBD)
+        L.gate_up = _lin(2 * FFN, N_EMBD)                  # merged (S22 decode)
+        L.ffn_gate, L.ffn_up = (_LinView(L.gate_up, 0, FFN),
+                                _LinView(L.gate_up, FFN, 2 * FFN))   # prefill slices
         L.ffn_down = _lin(N_EMBD, FFN)
         if attn:
             L.q = _lin(2 * HQ * D, N_EMBD)     # q|gate interleaved, Mappa B.2
             L.k, L.v = _lin(HKV * D, N_EMBD), _lin(HKV * D, N_EMBD)
             L.o = _lin(N_EMBD, HQ * D)
             L.q_norm, L.k_norm = torch.ones(D), torch.ones(D)
+            L.q_norm_dec = L.q_norm * m._scale             # S22: scale folded in
         else:
             L.qkv, L.gate = _lin(QKV_L, N_EMBD), _lin(4 * S, N_EMBD)
-            L.alpha, L.beta = _lin(4, N_EMBD), _lin(4, N_EMBD)
+            L.alpha_beta = _lin(8, N_EMBD)                 # merged (S22 decode)
+            L.alpha, L.beta = _LinView(L.alpha_beta, 0, 4), _LinView(L.alpha_beta, 4, 8)
             L.conv = torch.randn(QKV_L, CONV_K) * 0.3
             L.ssm_a = -torch.rand(4) * 2 - 0.1
             L.dt_bias = torch.randn(4)
@@ -110,6 +126,7 @@ def _make_model(seed=0, is_attn=(True, True, True)):
     m.cos, m.sin = rope_table(N_ROT, 1e7, MAX_CTX, torch.device("cpu"))
     m.fast_decode, m.use_graph = True, False
     m._weights_bytes = m._scratch_bytes = 0
+    m._init_decode()
     m.reset()
     return m
 

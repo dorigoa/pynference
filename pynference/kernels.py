@@ -67,6 +67,31 @@ def add_norm(x, a, w1, eps, scale=None, w2=None, x_out=None, h_out=None):
     return (x_out, h_out) if w2 is not None else x_out
 
 
+# ---------------------------------------------------------------- raw residual + norm (qwen35, S22)
+@triton.jit
+def _res_norm_k(X, A, W2, XO, HO, N, eps, BLOCK: tl.constexpr):
+    """XO = X + A;  HO = rmsnorm(XO) * W2. Unlike `add_norm` (gemma4, which
+    normalizes the *block output* before the residual) qwen35 adds the block
+    output raw and normalizes the sum, so this is a separate kernel."""
+    row = tl.program_id(0)
+    c = tl.arange(0, BLOCK)
+    m = c < N
+    x = tl.load(X + row * N + c, mask=m, other=0.0).to(tl.float32) \
+        + tl.load(A + row * N + c, mask=m, other=0.0).to(tl.float32)
+    tl.store(XO + row * N + c, x, mask=m)
+    h = x * tl.rsqrt(tl.sum(x * x, 0) / N + eps) * tl.load(W2 + c, mask=m, other=0.0)
+    tl.store(HO + row * N + c, h, mask=m)
+
+
+def res_norm(x, a, w2, eps, x_out=None, h_out=None):
+    """Residual update x + a, plus the next RMSNorm of the sum (S22 decode)."""
+    M, N = x.shape
+    x_out = torch.empty_like(x) if x_out is None else x_out
+    h_out = torch.empty_like(x) if h_out is None else h_out
+    _res_norm_k[(M,)](x, a, w2, x_out, h_out, N, eps, BLOCK=_np2(N), num_warps=8)
+    return x_out, h_out
+
+
 # ---------------------------------------------------------------- head norm + RoPE (+ store into KV cache)
 @triton.jit
 def _norm_rope_k(X, W, COS, SIN, POS, OUT, SLOT, D, stride_xt, stride_xh, stride_ot, stride_oh, eps,
@@ -216,6 +241,53 @@ def gelu_mul(gu: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
     F = F2 // 2
     out = torch.empty(M, F, dtype=torch.float32, device=gu.device) if out is None else out
     _gelu_mul_k[(M, triton.cdiv(F, 1024))](gu, out, F, BLOCK=1024, num_warps=4)
+    return out
+
+
+# ---------------------------------------------------------------- SwiGLU(gate) * up, merged rows (qwen35 FFN, S22)
+@triton.jit
+def _silu_mul_gu_k(GU, Y, F, BLOCK: tl.constexpr):
+    row = tl.program_id(0)
+    c = tl.program_id(1) * BLOCK + tl.arange(0, BLOCK)
+    m = c < F
+    g = tl.load(GU + row * 2 * F + c, mask=m, other=0.0)
+    u = tl.load(GU + row * 2 * F + F + c, mask=m, other=0.0)
+    tl.store(Y + row * F + c, g * tl.sigmoid(g) * u, mask=m)
+
+
+def silu_mul_gu(gu: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
+    """gu [M, 2F] = [gate | up] merged rows (one GEMV) -> silu(gate) * up, [M, F]
+    (S22 decode FFN; the prefill path keeps the separate gate/up GEMVs)."""
+    M, F2 = gu.shape
+    F = F2 // 2
+    out = torch.empty(M, F, dtype=torch.float32, device=gu.device) if out is None else out
+    _silu_mul_gu_k[(M, triton.cdiv(F, 1024))](gu, out, F, BLOCK=1024, num_warps=4)
+    return out
+
+
+# ---------------------------------------------------------------- attention output gate (qwen35, S22)
+@triton.jit
+def _sigmoid_gate_k(A, GU, Y, ND, D, BLOCK: tl.constexpr):
+    """a [M, Hq*D] *= sigmoid(gate), where gate is rows D..2D of each 2*D head
+    block of the attn_q projection `gu` [M, 2*Hq*D] (Mappa B.2/B.6). Reading
+    the interleaved rows directly avoids the strided-slice copy the torch
+    `a * sigmoid(qg.view(...)[..., D:])` chain needs."""
+    row = tl.program_id(0)
+    c = tl.program_id(1) * BLOCK + tl.arange(0, BLOCK)
+    m = c < ND
+    h = c // D
+    d = c - h * D
+    a = tl.load(A + row * ND + c, mask=m, other=0.0)
+    g = tl.load(GU + row * 2 * ND + (h * 2 + 1) * D + d, mask=m, other=0.0)
+    tl.store(Y + row * ND + c, a * tl.sigmoid(g), mask=m)
+
+
+def sigmoid_gate(a: torch.Tensor, gu: torch.Tensor, head_dim: int) -> torch.Tensor:
+    """a [M, Hq*D] float32, gu [M, Hq*2*D] the raw attn_q projection; returns
+    a * sigmoid(gate) (S22 decode; scale stays in `a` — q_norm_dec)."""
+    M, ND = a.shape
+    out = torch.empty_like(a)
+    _sigmoid_gate_k[(M, triton.cdiv(ND, 1024))](a, gu, out, ND, head_dim, BLOCK=1024, num_warps=4)
     return out
 
 

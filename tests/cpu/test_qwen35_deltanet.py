@@ -1,9 +1,10 @@
 """CPU unit tests for the Qwen35 gated DeltaNet layer (S21 step 2).
 
 Tiny stub model (world=1, all layers recurrent): the real `Qwen35` methods
-(`_layer_recurrent[_decode]`, `_ffn`, `forward`, `decode`, `reset`) run on
-fake `torch.nn.Linear` weights and the `deltanet` Triton kernels under
-TRITON_INTERPRET. Checks:
+(`_layer_recurrent`, `_ffn`, `forward`, `_decode_body` via `decode`, `reset`)
+run on fake `torch.nn.Linear` weights (merged gate|up / alpha|beta plus
+`_LinView` row slices, as the real loader builds them in S22) and the
+`deltanet` Triton kernels under TRITON_INTERPRET. Checks:
 
 * the layer math against the vectorized CPU reference of S20 (conv_prefill +
   l2norm_qk + delta_prefill + norm_gated) on the same weights;
@@ -66,6 +67,18 @@ def _lin(n, k, scale=0.05):
     return lin
 
 
+class _LinView:
+    """Rows [a, b) of a Linear as a callable — the stub twin of the real
+    zero-copy `QLinear` row slices (S22: merged gate|up and alpha|beta
+    tensors, prefill/reference consume the slices)."""
+
+    def __init__(self, lin, a, b):
+        self.lin, self.a, self.b = lin, a, b
+
+    def __call__(self, x):
+        return F.linear(x, self.lin.weight[self.a:self.b])
+
+
 def _make_model(seed=0, n_layer=3):
     torch.manual_seed(seed)
     m = Qwen35.__new__(Qwen35)
@@ -83,10 +96,14 @@ def _make_model(seed=0, n_layer=3):
         L.is_attn = False
         L.attn_norm = torch.ones(N_EMBD)
         L.post_attn_norm = torch.ones(N_EMBD)
-        L.ffn_gate, L.ffn_up = _lin(FFN, N_EMBD), _lin(FFN, N_EMBD)
+        L.gate_up = _lin(2 * FFN, N_EMBD)                  # merged (S22 decode)
+        L.ffn_gate, L.ffn_up = (_LinView(L.gate_up, 0, FFN),
+                                _LinView(L.gate_up, FFN, 2 * FFN))   # prefill slices
         L.ffn_down = _lin(N_EMBD, FFN)
         L.qkv, L.gate = _lin(QKV_L, N_EMBD), _lin(N_VALUE_L * S, N_EMBD)
-        L.alpha, L.beta = _lin(N_VALUE_L, N_EMBD), _lin(N_VALUE_L, N_EMBD)
+        L.alpha_beta = _lin(2 * N_VALUE_L, N_EMBD)         # merged (S22 decode)
+        L.alpha = _LinView(L.alpha_beta, 0, N_VALUE_L)
+        L.beta = _LinView(L.alpha_beta, N_VALUE_L, 2 * N_VALUE_L)
         L.conv = torch.randn(QKV_L, CONV_K) * 0.3
         L.ssm_a = -torch.rand(N_VALUE_L) * 2 - 0.1   # -exp(A_log) < 0 (Mappa A.4)
         L.dt_bias = torch.randn(N_VALUE_L)
@@ -100,6 +117,7 @@ def _make_model(seed=0, n_layer=3):
     m.cos = m.sin = None
     m.fast_decode, m.use_graph = True, False
     m._weights_bytes = m._scratch_bytes = 0
+    m._init_decode()
     m.reset()
     return m
 
