@@ -18,7 +18,9 @@ Bars: keep-set (indexer_sel finite pattern) exact on every token whose
 top-k cut is not within 50x the measured cross-device score drift of a tie
 (such near-tie tokens are printed and capped, never silently ignored);
 outputs cosine >= 0.9999 and relative error <= 1e-4 on the non-ambiguous
-rows; pool keys and scores cosine >= 0.9999, relative <= 5e-3. Cross-device
+rows (a 1-token decode step that is entirely near-tie has no comparable
+row and is only counted against the near-tie budget); pool keys and scores
+cosine >= 0.9999, relative <= 5e-3. Cross-device
 torch-vs-torch can never be bit-exact (different matmul reduction orders;
 and the f16 raw-key cache amplifies any fp32 drift into a 1-ulp jump of a
 cache row), so exact node matches are not asserted here — the dump-anchored
@@ -117,8 +119,11 @@ def _check_cross(pc, pg, out_c, out_g, n_top_pool, tag):
     amb = _amb_rows(sc_c, n_top_pool, 50 * drift + 1e-9)
     kc, kg = torch.isfinite(pc["indexer_sel"]), torch.isfinite(pg["indexer_sel"])
     assert torch.equal(kc[~amb], kg[~amb]), f"keep-set {tag}"
-    assert _cos(out_c[~amb], out_g[~amb]) >= TOL_COS and \
-        _rel(out_c[~amb], out_g[~amb]) <= TOL_REL, f"out {tag}"
+    if (~amb).any():   # a 1-token decode step can be near-tie entirely:
+        assert _cos(out_c[~amb], out_g[~amb]) >= TOL_COS and \
+            _rel(out_c[~amb], out_g[~amb]) <= TOL_REL, f"out {tag}"
+        # no comparable row left (job S25-2: empty slice -> NaN assert); the
+        # caller caps how often that may happen (near-tie budget)
     return kc, int(amb.sum()), drift
 
 
@@ -201,5 +206,6 @@ def test_decode_matches_cpu():
                                     f"decode N={n}")
         if a:
             n_amb += 1
-            print(f"drift decode N={n}: {drift:.2e} near-tie (keep-set skipped)")
+            print(f"drift decode N={n}: {drift:.2e} near-tie "
+                  "(keep-set/output skipped, counted)")
     assert n_amb <= (T1 - T0) // 2, "selection near-tie across devices too often"
