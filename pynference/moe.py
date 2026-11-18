@@ -280,7 +280,7 @@ def route_weights(logits: torch.Tensor, top_k: int) -> tuple[list[int], list[flo
     return idx.tolist(), w.tolist()
 
 
-ROUTINGS = ("renorm", "logits")
+ROUTINGS = ("renorm", "logits", "softmax")
 
 
 def topk_weights(logits: torch.Tensor, top_k: int,
@@ -291,14 +291,23 @@ def topk_weights(logits: torch.Tensor, top_k: int,
     "logits": GPT-OSS exact form (llama-graph.cpp:2295-2420, gating
     SOFTMAX_WEIGHT): top-k on the raw logits, softmax over just those k,
     no renormalization.
+    "softmax": Flash-Next / Qwen3-Next exact form (S23 map C,
+    llama-graph.cpp MOE_NORM_TOPK): softmax over all experts, top-k of the
+    probabilities, divide by their sum clamped to the f16 min normal
+    (6.103515625e-5 = 2**-14, ggml used f16 weights). With E = 512 and
+    k = 10 the sum is >= 10/512 in the worst case, so the clamp is inert
+    and this matches "renorm" bit-for-bit in practice; it is kept separate
+    to stay faithful to the reference graph.
     """
     if routing == "logits":
         top, idx = torch.topk(logits, top_k, dim=-1)
         return torch.softmax(top, -1), idx
-    if routing != "renorm":
+    if routing not in ROUTINGS:
         raise ValueError(f"unknown routing {routing!r}, expected one of {ROUTINGS}")
     p = torch.softmax(logits, dim=-1)
     w, idx = torch.topk(p, top_k, dim=-1)
+    if routing == "softmax":
+        return w / w.sum(-1, keepdim=True).clamp_min(2.0 ** -14), idx
     return w / w.sum(-1, keepdim=True), idx
 
 
@@ -548,7 +557,9 @@ class MoE:
     `shared`, when given, is a triple (gate, up, down) of `QWeight`s for a
     dense FFN every rank computes on every token; it is fully replicated
     (`make_qweight` does not shard), so it is added after the `all_reduce`
-    — adding it before would multiply it by the world size.
+    — adding it before would multiply it by the world size. `shared_gate`,
+    with it, is a float32 [k] vector: the shared output is scaled per token
+    by `sigmoid(x @ shared_gate)` (Flash-Next ffn_gate_inp_shexp, S23 map C).
 
     `routing` selects the weight rule of `topk_weights` ("renorm" default,
     "logits" for GPT-OSS). `expert_bias`, when given, is a triple (gate, up,
@@ -568,8 +579,8 @@ class MoE:
     def __init__(self, store: ExpertStore, layer: int, *, top_k: int,
                  router_w: torch.Tensor, router_bias: torch.Tensor | None = None,
                  activation: str = "swiglu", alpha: float = 1.702,
-                 limit: float = 7.0, shared=None, routing: str = "renorm",
-                 expert_bias=None):
+                 limit: float = 7.0, shared=None, shared_gate=None,
+                 routing: str = "renorm", expert_bias=None):
         self.store = store
         self.tp = store.tp
         self.layer = layer
@@ -612,6 +623,12 @@ class MoE:
         self._fused_act = activation == "swiglu_oai"
         self.alpha, self.limit = alpha, limit
         self.shared = tuple(shared) if shared is not None else None
+        if shared_gate is not None:
+            if self.shared is None:
+                raise ValueError("shared_gate needs a shared expert triple")
+            if shared_gate.shape != (self.k,) or shared_gate.dtype != torch.float32:
+                raise ValueError(f"shared_gate must be float32 [{self.k}]")
+        self.shared_gate = shared_gate
         self.local = set(store.local_ids[layer])
         self._scratch: dict[tuple[str, int, int], torch.Tensor] = {}
 
@@ -624,7 +641,11 @@ class MoE:
 
     def _shared_out(self, x: torch.Tensor) -> torch.Tensor:
         gate, up, down = self.shared
-        return down(self.act(gate(x), up(x)))
+        y = down(self.act(gate(x), up(x)))
+        if self.shared_gate is not None:
+            # x [T, k] f32 -> gate scalar per token, applied in f32
+            y = y * torch.sigmoid(x.float() @ self.shared_gate)[:, None]
+        return y
 
     # ---- graph-friendly decode pieces (S18) ----
     def _init_decode_bufs(self, dev) -> None:

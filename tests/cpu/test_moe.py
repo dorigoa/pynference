@@ -5,10 +5,10 @@ import numpy as np
 import pytest
 import torch
 
-from pynference.moe import (ExpertGroup, HostPool, MoE, SlotMap, ACTIVATIONS,
-                            expert_owner, group_by_expert, local_experts,
-                            plan_residency, route_weights, swiglu, swiglu_oai,
-                            topk_weights)
+from pynference.moe import (ExpertGroup, HostPool, MoE, ROUTINGS, SlotMap,
+                            ACTIVATIONS, expert_owner, group_by_expert,
+                            local_experts, plan_residency, route_weights,
+                            swiglu, swiglu_oai, topk_weights)
 from pynference.quant import row_bytes
 
 
@@ -229,6 +229,25 @@ def test_topk_weights_logits_softmaxes_only_the_topk():
         topk_weights(logits, 2, "argmax")
 
 
+def test_topk_weights_softmax_is_renorm_with_clamped_sum():
+    # Flash-Next MOE_NORM_TOPK (S23 map C, llama-graph.cpp:2304+2403):
+    # softmax over all experts, top-k of the probabilities, divide by their
+    # sum clamped to the f16 min normal (6.103515625e-5 = 2**-14, the
+    # reference stored weights in f16). The top-k sum is >= k/E, so at
+    # E=512, k=10 the clamp never binds and this matches "renorm".
+    assert "softmax" in ROUTINGS
+    torch.manual_seed(7)
+    logits = torch.randn(3, 512) * 4.0
+    w, idx = topk_weights(logits, 10, "softmax")
+    p = torch.softmax(logits, -1)
+    w_ref, idx_ref = torch.topk(p, 10, dim=-1)
+    w_ref = w_ref / w_ref.sum(-1, keepdim=True).clamp_min(2.0 ** -14)
+    assert torch.equal(idx, idx_ref) and torch.equal(w, w_ref)
+    assert torch.allclose(w.sum(-1), torch.ones(3), atol=1e-6)
+    w_ren, idx_ren = topk_weights(logits, 10, "renorm")
+    assert torch.equal(idx, idx_ren) and torch.allclose(w, w_ren, atol=1e-7)
+
+
 # ------------------------------------------------------------- prefill grouping
 
 def test_group_by_expert_local_filtering():
@@ -291,8 +310,26 @@ def test_moe_construction_rejects_bad_inputs():
 def test_moe_routing_and_expert_bias_validation():
     m = _moe(routing="logits", activation="swiglu_oai")
     assert m.routing == "logits" and m.act.keywords["limit"] == 7.0
+    assert _moe(routing="softmax").routing == "softmax"  # Flash-Next (S26)
     with pytest.raises(ValueError, match="unknown routing"):
-        _moe(routing="softmax")
+        _moe(routing="argmax")
+
+
+def test_moe_shared_gate_scales_the_shared_expert():
+    # Flash-Next shared expert (S23 map C): ffn_out += shexp * sigmoid(g . x)
+    torch.manual_seed(3)
+    x = torch.randn(5, 128)
+    Wg, Wu, Wd, gw = (torch.randn(128, 32), torch.randn(128, 32),
+                      torch.randn(32, 128), torch.randn(128))
+    trio = (lambda t: t @ Wg, lambda t: t @ Wu, lambda t: t @ Wd)
+    want = swiglu(x @ Wg, x @ Wu) @ Wd
+    assert torch.allclose(_moe(shared=trio)._shared_out(x), want, atol=1e-5)
+    got = _moe(shared=trio, shared_gate=gw)._shared_out(x)
+    assert torch.allclose(got, want * torch.sigmoid(x @ gw)[:, None], atol=1e-5)
+    with pytest.raises(ValueError, match="shared_gate must be"):
+        _moe(shared=trio, shared_gate=torch.randn(64))
+    with pytest.raises(ValueError, match="shared_gate needs"):
+        _moe(shared_gate=gw)
     E, ffn, k = 8, 32, 128  # gate/up [E, ffn], down [E, k], float32
     good = (torch.zeros(E, ffn), torch.zeros(E, ffn), torch.zeros(E, k))
     got = _moe(expert_bias=good).eb

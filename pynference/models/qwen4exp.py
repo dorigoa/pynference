@@ -25,7 +25,7 @@ import torch
 
 from pynference.models.gemma4 import rope_neox, rope_table
 from pynference.quant.ref import ref_dequant
-from pynference.quant.weight import NativeQWeight
+from pynference.quant.weight import NativeQWeight, make_qweight
 
 
 def silu(x: torch.Tensor) -> torch.Tensor:
@@ -599,3 +599,83 @@ class QSA:
                 vh.repeat_interleave(rep, 0).unsqueeze(0),
                 attn_mask=mask.unsqueeze(0), scale=self.kq_scale)
         return out[0].transpose(0, 1)
+
+
+# --------------------------------------------------------------- MoE FFN (S26)
+
+MOE_N_EXPERTS = 512
+MOE_TOP_K = 10
+MOE_FFN = 640
+
+
+def moe_expert_groups(g):
+    """One ExpertGroup per (layer, projection) for the Flash-Next experts.
+
+    GGUF layout matches GPT-OSS (models/gptoss.py):
+    blk.N.ffn_{gate,up}_exps.weight is [k, n, E] in ggml order (k = 2560
+    contiguous inputs, n = 640 outputs, E = 512 experts) and
+    ffn_down_exps.weight is [n, k, E] = [640, 2560, E], so global expert e
+    occupies rows [e*n, (e+1)*n) of the flat tensor.
+
+    Unlike GPT-OSS (all MXFP4), the "UD" mix keeps a per-(layer, projection)
+    type (facts.json per_layer_types: gate/up in IQ3_XXS/IQ4_XS/IQ2_S, down
+    in Q5_0/IQ4_NL/Q2_0); all are native quant types the indexed GEMV
+    kernels already cover, so each group just carries its tensor's type.
+    """
+    from ..moe import ExpertGroup  # lazy import: no Triton at module load
+    groups = []
+    for il in range(int(g.get("block_count"))):
+        for proj in ("gate", "up", "down"):
+            name = f"blk.{il}.ffn_{proj}_exps.weight"
+            t = g.tensors[name]
+            k, n, e = t.shape
+            groups.append(ExpertGroup(proj, il, e, n, k, t.type,
+                                      lambda ex, t=name, n=n: g.rows(t, ex * n, (ex + 1) * n)))
+    return groups
+
+
+def moe_router(g, il: int) -> torch.Tensor:
+    """Router f32: ffn_gate_inp.weight [k, E] (ggml order) -> [E, k].
+
+    No bias (S23 map C): Flash-Next routes with plain softmax(logits),
+    moe routing "softmax" — no expert_bias, no logits bias, and no
+    expert_weights_scale either."""
+    t = g.tensors[f"blk.{il}.ffn_gate_inp.weight"]
+    assert t.type == "F32", (t.name, t.type)
+    k, e = t.shape
+    return torch.from_numpy(np.array(g.raw(t.name).view(np.float32))).reshape(e, k)
+
+
+def moe_shared_expert(g, il: int, device):
+    """Dense shared expert per layer: gate/up [2560, 640] ggml -> QWeight
+    [640, 2560], down [640, 2560] -> [2560, 640] (types vary per layer:
+    mostly Q6_K/Q8_0, read from the tensor), plus the scalar gate vector
+    ffn_gate_inp_shexp.weight f32 [2560] applied as sigmoid(x @ gate)."""
+    trio = []
+    for proj, (n, k) in (("gate", (MOE_FFN, 2560)), ("up", (MOE_FFN, 2560)),
+                         ("down", (2560, MOE_FFN))):
+        name = f"blk.{il}.ffn_{proj}_shexp.weight"
+        t = g.tensors[name]
+        assert tuple(t.shape) == (k, n), (name, t.shape)
+        trio.append(make_qweight(g.raw(name), t.type, n, k, device))
+    gw = moe_gate_shexp(g, il)
+    return trio + [gw.to(device)]
+
+
+def moe_gate_shexp(g, il: int) -> torch.Tensor:
+    """Shared-expert scalar gate ffn_gate_inp_shexp.weight, f32 [k]."""
+    t = g.tensors[f"blk.{il}.ffn_gate_inp_shexp.weight"]
+    assert t.type == "F32", (t.name, t.type)
+    return torch.from_numpy(np.array(g.raw(t.name).view(np.float32)))
+
+
+def moe_layer(g, store, il: int, device):
+    """Flash-Next FFN as a MoE (C5): 512 experts, top-10 softmax routing,
+    plain swiglu (no clamp/alpha), shared expert 640 with sigmoid scalar
+    gate, no biases anywhere (S23 map C)."""
+    from ..moe import MoE  # lazy import (module header note)
+    shared = moe_shared_expert(g, il, device)
+    return MoE(store, il, top_k=MOE_TOP_K,
+               router_w=moe_router(g, il).to(device),
+               activation="swiglu", routing="softmax",
+               shared=shared[:3], shared_gate=shared[3])
