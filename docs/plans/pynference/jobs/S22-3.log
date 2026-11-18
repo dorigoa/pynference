@@ -1,0 +1,23 @@
+== start 12:12:33
+== pytest_gpu exit 0 (12:16:17)
+  /home/alvise/pynference/tests/gpu/test_moe_layer.py:87: RuntimeWarning: overflow encountered in exp
+    return g / (1.0 + np.exp(-alpha * g)) * (u + 1.0)
+
+== regress_qwen35 exit 0 (12:18:57)
+chat-it: max |dp| 2.28e-05 over top-10
+chat-en: max |dp| 4.90e-05 over top-10
+code: max |dp| 3.91e-06 over top-10
+raw: max |dp| 1.62e-05 over top-10
+ppl: baseline 1.0167, now 1.0167, rel diff 0.000%
+PASS
+PASS
+== regress_gemma4 exit 0 (12:20:50)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== summary: pytest=0 regressqwen=0 regressgemma=0
+== end 12:20:50
