@@ -102,6 +102,13 @@ def test_ple_real_layer_device_vs_cpu():
     finally:
         g.close()
 
+    # gather returns [16T, 160]; PLE.forward takes emb [T, 2560] (idx is
+    # token-major, so the 16 heads of each token fold into the channels).
+    # The CPU F32QWeight flattened by luck; QLinear on device requires it.
+    T = len(DUMP_TOKENS)
+    emb_cpu = emb_cpu.reshape(T, -1)
+    emb_gpu = emb_gpu.reshape(T, -1)
+
     torch.manual_seed(0)
     res = torch.randn(len(DUMP_TOKENS), 10240)
     kw_cpu = F32QWeight(torch.from_numpy(ref_dequant(key_raw, "Q8_0")), 10240, 2560)

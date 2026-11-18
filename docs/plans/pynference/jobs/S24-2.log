@@ -1,0 +1,15 @@
+== start 16:10:51
+== gpu_s24 exit 1 (16:10:58)
+FAILED tests/gpu/test_qwen4exp_hc.py::test_hc_real_mixer_device_vs_cpu - Asse...
+FAILED tests/gpu/test_qwen4exp_ple.py::test_ple_real_layer_device_vs_cpu - Ru...
+2 failed, 3 passed in 5.91s
+== gpu_all exit 1 (16:14:42)
+FAILED tests/gpu/test_qwen4exp_hc.py::test_hc_real_mixer_device_vs_cpu - Asse...
+FAILED tests/gpu/test_qwen4exp_ple.py::test_ple_real_layer_device_vs_cpu - Ru...
+2 failed, 131 passed, 1 skipped, 1 warning in 223.53s (0:03:43)
+== regress exit 0 (16:16:54)
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== summary: gpu_s24 1 gpu_all 1 regress 0

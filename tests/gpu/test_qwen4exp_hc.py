@@ -122,6 +122,9 @@ def test_hc_real_mixer_device_vs_cpu():
     assert _rel_err(m_cpu, m_gpu) < 5e-3
     assert _rel_err(i_cpu, i_gpu) < 5e-3
 
-    comb_cpu = hc_combine(res, torch.randn(5, N_EMBD), i_cpu)
-    comb_gpu = hc_combine(res.to(DEV), torch.randn(5, N_EMBD).to(DEV), i_gpu)
+    # one shared block_out for both sides — the S24-2 failure was two
+    # different draws (cos 0.48 of independent gaussians), not a code bug.
+    bo = torch.randn(5, N_EMBD)
+    comb_cpu = hc_combine(res, bo, i_cpu)
+    comb_gpu = hc_combine(res.to(DEV), bo.to(DEV), i_gpu)
     assert _cos(comb_cpu, comb_gpu) >= TOL_COS
