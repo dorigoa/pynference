@@ -10,8 +10,11 @@ the math; constants live in tests/golden/qwen4exp/facts.json
 
 This file holds the PLE (only blk.1 has it): the n-gram row hash computed
 host-side, the IQ4_NL embedding-table gather, and the gated key/value +
-dilated depthwise-conv block; and the hyper-connection mixer and combine
-(`hc_attn_*`/`hc_ffn_*` per layer, `output_hc_*` at the exit head).
+dilated depthwise-conv block; the hyper-connection mixer and combine
+(`hc_attn_*`/`hc_ffn_*` per layer, `output_hc_*` at the exit head); and the
+QSA block (plan S25: every 4th layer, `blk.3` first) — the lightning indexer
+with 4:1 key pooling, the top-k cell selection and the gated GQA attention
+it masks.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ import math
 import numpy as np
 import torch
 
+from pynference.models.gemma4 import rope_neox, rope_table
 from pynference.quant.ref import ref_dequant
 from pynference.quant.weight import NativeQWeight
 
@@ -244,3 +248,226 @@ class PLE:
             "ple_conv_normed": normed, "ple_conv_out": conv_out,
         }
         return res, new_state, parts
+
+
+class QSA:
+    """Compressed attention (QSA) with the lightning indexer — plan S25.
+
+    qwen4exp.cpp `build_qsa_sel` 808-943 + `build_attn_qsa` 947-1004 +
+    `build_layer_attn` 1006-1081, cross-checked against the S23-1 blk.3 dump
+    (report S23 map B). One `forward` runs any step (prefill chunk or one
+    decode token); state is the append-only raw-indexer-key cache (with the
+    M-RoPE position stored per cell) and the K/V cache. Layout torch [T, C];
+    correctness-first like the rest of this file — pooled keys are recomputed
+    from the cached raw rows each call (O(N); the incremental kernel is S27).
+
+    Math as the dump shows it:
+      * `k_raw = idx_k(cur)` is cached RAW in an f16 cache, gets no norm
+        and no RoPE, and pooling reads the cache back through GET_ROWS with
+        indices `[4b + j]` whose past-the-end slots are 0, not zeros: an
+        incomplete tail block pools `compress` copies of row 0 of the cache
+        (dump leaf_108 = [0,1,2,3,0,0,0,0] for N=5, and the gathered sums
+        confirm it). Block pool = GET_ROWS rows summed and SCALE'd by a
+        fixed 1/compress, then RMSNorm x k_norm gamma — and NOTHING else:
+        `indexer_pool_k_new-3` (sum 12.820622) is exactly the normalized
+        gamma'd block, no rope (dump chain RESHAPE->SUMS->SCALE->RMS_NORM->
+        MUL k_norm.weight). The pool keys the score consumes are these,
+        cache values included (leaf_8 gathers the pool slots, repeating the
+        last written one over all remaining slots); only `indexer_q` gets
+        RoPE, at the token positions (`ROPE(node_513, inp_pos)`).
+      * `score[b, t] = (1/sqrt(idx_dim)) * sum_h relu(q_t.h . k_b)`, where
+        every indexer head weight is that scale (808:866). A block is
+        visible to token t iff its LAST cell exists and is strictly in the
+        past or at the token — `pos[4b+3] <= pos[t]`, i.e. complete and
+        causal; invisible (and padded) slots are -inf. Verified on the
+        dump: blk 0 scores -inf for tokens 0-2, finite from token 3; the
+        incomplete block 1 (cell 4) never scores even at token 4.
+      * selection (ggml_top_k is unordered, so we compare sets): keep the
+        cells of the `idx_top_k/compress` best visible blocks PLUS every
+        cached cell at-or-before the token whose block is not yet visible
+        (the incomplete tail); everything else dropped. <= 2048 cached cells
+        means all visible blocks fit, so the kept set is exactly the causal
+        prefix — matches indexer_sel-3 ({256, 5} f16: cell <= token is 0).
+      * attention is plain GQA (no softcap/sink) with `sel` as the additive
+        kq mask and `kq_scale = 1/sqrt(head_dim)`; q/k/v reach the cache
+        already normed+roped, no Hadamard rotations (self_k_rot/self_v_rot
+        are a cache option this dump does not use). The Q projection emits
+        interleaved per-head [query | gate] (the gate view starts at
+        element 256 of each 512 group); `attn_pregate * sigmoid(gate)`
+        then `wo`.
+
+    M-RoPE: `rope.dimension_sections = [11, 11, 10, 0]` over 32 pairs with
+    one position row per axis — for text all axes agree, so plain NEOX
+    rotation of the first `rope_n_rot` dims at the cell position is exact.
+    """
+
+    def __init__(self, wq, wk, wv, wo, q_norm, k_norm,
+                 idx_q, idx_k, idx_q_norm, idx_k_norm, *,
+                 n_head: int, n_head_kv: int, head_dim: int,
+                 idx_heads: int, idx_dim: int, idx_top_k: int, compress: int,
+                 rope_n_rot: int, rope_base: float, eps: float):
+        self.wq, self.wk, self.wv, self.wo = wq, wk, wv, wo
+        self.q_norm, self.k_norm = q_norm, k_norm
+        self.idx_q, self.idx_k = idx_q, idx_k
+        self.idx_q_norm, self.idx_k_norm = idx_q_norm, idx_k_norm
+        self.n_head, self.n_head_kv, self.head_dim = n_head, n_head_kv, head_dim
+        self.idx_heads, self.idx_dim = idx_heads, idx_dim
+        self.compress, self.n_top_pool = compress, idx_top_k // compress
+        self.rope_n_rot, self.rope_base, self.eps = rope_n_rot, rope_base, eps
+        self.kq_scale = 1.0 / math.sqrt(head_dim)
+        self.idx_scale = 1.0 / math.sqrt(idx_dim)
+
+    def zero_state(self) -> dict:
+        """Append-only caches: raw indexer keys + their cell positions, and
+        the normed/roped K/V cache (cells in sequence order)."""
+        e = lambda *shape: torch.zeros(0, *shape)  # noqa: E731  (the reference runs on CPU)
+        return {"idx_keys": e(self.idx_dim),
+                "idx_pos": torch.zeros(0, dtype=torch.int64),
+                "kv_k": e(self.n_head_kv, self.head_dim),
+                "kv_v": e(self.n_head_kv, self.head_dim)}
+
+    def forward(self, cur: torch.Tensor, pos: torch.Tensor, state: dict):
+        """cur [T, n_embd], pos [T] int64 absolute M-RoPE positions (all four
+        axes agree for text), state from zero_state()/the previous call ->
+        (out [T, n_embd], new_state, parts).
+
+        `parts` holds every cb()-dumped node of the block in torch layout,
+        logical (unpadded) sizes: the dump pads them to the cache shapes
+        (indexer_k to the pool-slot count by repeating the last written key
+        — its gather index is clamped to the last slot —, indexer_score and
+        indexer_sel/kq_mask to the KV-cell count with -inf) — see the S25
+        test. `indexer_pool_k_new` is just the blocks this step (re)wrote.
+        """
+        T = cur.shape[0]
+        dev = cur.device
+        pos = pos.to(device=dev, dtype=torch.int64)
+        cp = self.compress
+
+        # ---- indexer: pooled keys, query, scores, selection (build_qsa_sel)
+        k_raw = self.idx_k(cur)                                       # [T, 128]
+        # the cache is an f16 buffer (SET_ROWS f16) that pooling gathers
+        # back through, so the pooled keys see f16-rounded raw rows
+        idx_keys = torch.cat([state["idx_keys"], k_raw], 0).half().float()  # [N, 128]
+        idx_pos = torch.cat([state["idx_pos"], pos])                  # [N]
+        N = idx_keys.shape[0]
+        n_pool = (N + cp - 1) // cp
+
+        pad = n_pool * cp - N
+        # the pooling GET_ROWS indexes past-the-end tail slots with 0, not
+        # with zero rows: an incomplete block pools `cp` copies of cache
+        # row 0 (dump leaf_108 = [0,1,2,3,0,0,0,0] at N=5). Those blocks
+        # never score (visibility below), only the dump nodes see them.
+        cell = torch.arange(n_pool * cp, device=dev)
+        cell = cell.masked_fill(cell >= N, 0)
+        pooled = idx_keys[cell.view(n_pool, cp)].sum(1) * (1.0 / cp)
+        pooled = grouped_norm(pooled, self.idx_k_norm, self.eps)
+        cos_all, sin_all = rope_table(self.rope_n_rot, self.rope_base, None,
+                                      int(idx_pos.max().item()) + 1, dev)
+
+        q_idx = self.idx_q(cur).view(T, self.idx_heads, self.idx_dim)
+        q_idx = grouped_norm(q_idx, self.idx_q_norm, self.eps)
+        q_idx = rope_neox(q_idx, cos_all[pos], sin_all[pos])
+
+        # block b is visible to token t iff its last (padded) cell position
+        # exists and is at-or-before the token: padded slots read +inf.
+        pos_pad = torch.cat([idx_pos, idx_pos.new_full((pad,), 1 << 60)])
+        vis = pos_pad[torch.arange(n_pool, device=dev) * cp + (cp - 1)].unsqueeze(1) \
+            <= pos.unsqueeze(0)                                       # [n_pool, T] -> vis[b, t]
+        score = q_idx.new_zeros(n_pool, T)
+        for h in range(self.idx_heads):                               # rectified, unweighted sum
+            score += torch.relu(pooled @ q_idx[:, h, :].T)            # [n_pool, T]
+        score = score * self.idx_scale
+        score = torch.where(vis, score, score.new_full((), float("-inf")))
+
+        keep = self._keep_cells(score, vis, idx_pos, pos, n_pool)      # [T, N] bool
+        sel = torch.where(keep, torch.zeros((), device=dev),
+                          torch.full((), float("-inf"), device=dev))   # additive 0/-inf mask
+
+        # ---- Q / K / V (build_layer_attn 1022-1058)
+        q_full = self.wq(cur)                                         # [T, 2*hd*n_head]
+        qv = q_full.view(T, self.n_head, 2 * self.head_dim)
+        q_pre, gate = qv[..., :self.head_dim], qv[..., self.head_dim:]
+        q_normed = grouped_norm(q_pre, self.q_norm, self.eps)
+        q_roped = rope_neox(q_normed, cos_all[pos], sin_all[pos])
+        k_pre = self.wk(cur).view(T, self.n_head_kv, self.head_dim)
+        k_normed = grouped_norm(k_pre, self.k_norm, self.eps)
+        k_roped = rope_neox(k_normed, cos_all[pos], sin_all[pos])
+        v = self.wv(cur).view(T, self.n_head_kv, self.head_dim)
+
+        kv_k = torch.cat([state["kv_k"], k_roped], 0)
+        kv_v = torch.cat([state["kv_v"], v], 0)
+
+        # ---- masked GQA attention + gate (build_attn_qsa / 1069-1078)
+        attn = self._attend(q_roped, kv_k, kv_v, sel)
+        attn_flat = attn.reshape(T, self.n_head * self.head_dim)
+        gate_sig = torch.sigmoid(gate.reshape(T, self.n_head * self.head_dim))
+        out = self.wo(attn_flat * gate_sig)
+
+        parts = {
+            "indexer_k_raw": k_raw,
+            "indexer_pool_k_new": pooled[state["idx_keys"].shape[0] // cp:],
+            "indexer_k": pooled,
+            "indexer_q": q_idx,
+            "indexer_score": score.T,                                   # [T, n_pool]
+            "indexer_sel": sel,
+            "kq_mask_qsa": sel,
+            "Qcur_full": q_full,
+            "Qcur_reshaped": q_pre,
+            "Qcur_normed": q_normed,
+            "Qcur": q_roped,
+            "gate_reshaped": gate.reshape(T, self.n_head * self.head_dim),
+            "Kcur": k_pre.reshape(T, self.n_head_kv * self.head_dim),
+            "Kcur_normed": k_normed,
+            "Kcur_rope": k_roped,          # the dump cb's Kcur a second time post-rope
+            "Vcur": v.reshape(T, self.n_head_kv * self.head_dim),
+            "attn_pregate": attn_flat,
+            "gate_sigmoid": gate_sig,
+            "attn_gated": attn_flat * gate_sig,
+            "attn_output": out,
+        }
+        new_state = {"idx_keys": idx_keys, "idx_pos": idx_pos,
+                     "kv_k": kv_k, "kv_v": kv_v}
+        return out, new_state, parts
+
+    def _keep_cells(self, score: torch.Tensor, vis: torch.Tensor,
+                    idx_pos: torch.Tensor, pos: torch.Tensor, n_pool: int) -> torch.Tensor:
+        """kept-cell mask [T, N] (bool): the cells of the top-`n_top_pool`
+        VISIBLE blocks per token plus the incomplete-tail cells at-or-before
+        the token. ggml_top_k's order is undefined, so ties at the cut can
+        differ from the dump set-theoretically; with real scores that never
+        bites (report S25)."""
+        T, N = pos.shape[0], idx_pos.shape[0]
+        dev, cp = pos.device, self.compress
+        k = min(n_pool, self.n_top_pool)
+        top = score.topk(k, dim=0).indices.T                              # [T, k] block ids
+        # winners that scored -inf (invisible) keep nothing: pair each with vis
+        block_keep = torch.zeros(T, n_pool, dtype=torch.bool, device=dev)
+        block_keep.scatter_(1, top, vis.T.gather(1, top))
+        block_of_cell = torch.arange(N, device=dev) // cp
+        keep = block_keep[:, block_of_cell]                               # cells of kept blocks
+        # incomplete-tail cells at-or-before the token: the block's last cell
+        # does not exist yet (padded sentinel 1<<60 keeps such blocks open)
+        last_pos = torch.full((n_pool,), 1 << 60, device=dev, dtype=idx_pos.dtype)
+        complete = torch.arange(n_pool, device=dev) * cp + cp - 1 < N
+        last_pos[complete] = idx_pos[torch.arange(n_pool, device=dev)[complete] * cp + cp - 1]
+        keep |= (idx_pos.unsqueeze(0) <= pos.unsqueeze(1)) \
+            & (last_pos[block_of_cell].unsqueeze(0) > pos.unsqueeze(1))
+        return keep
+
+    def _attend(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                mask: torch.Tensor) -> torch.Tensor:
+        """GQA attention: q [T, n_head, hd], k/v [N, n_head_kv, hd], additive
+        mask [T, N] (0 keep, -inf drop) -> [T, n_head, hd]."""
+        # sdpa wants (B, H, L, E): transpose the [seq, heads, hd] layout first
+        qh, kh, vh = q.transpose(0, 1), k.transpose(0, 1), v.transpose(0, 1)
+        try:
+            out = torch.nn.functional.scaled_dot_product_attention(
+                qh.unsqueeze(0), kh.unsqueeze(0), vh.unsqueeze(0),
+                attn_mask=mask.unsqueeze(0), scale=self.kq_scale, enable_gqa=True)
+        except TypeError:  # torch < 2.5: expand the KV heads by hand
+            rep = self.n_head // self.n_head_kv
+            out = torch.nn.functional.scaled_dot_product_attention(
+                qh.unsqueeze(0), kh.repeat_interleave(rep, 0).unsqueeze(0),
+                vh.repeat_interleave(rep, 0).unsqueeze(0),
+                attn_mask=mask.unsqueeze(0), scale=self.kq_scale)
+        return out[0].transpose(0, 1)
