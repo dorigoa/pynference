@@ -1,0 +1,28 @@
+== start 00:51:34
+== pytest tests/gpu (00:51:34)
+== pytest gpu exit 0 (00:55:25)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+128 passed, 1 skipped, 1 warning in 229.19s (0:03:49)
+== timing deltanet (00:55:25)
+== timing exit 0 (00:55:29)
+t decode 16/48/S128 0.052 ms
+t prefill 16/48/S128 T=128 0.761 ms
+t prefill 16/48/S128 T=512 2.978 ms
+t decode 8/24/S128 0.051 ms
+t prefill 8/24/S128 T=128 0.846 ms
+t prefill 8/24/S128 T=512 2.663 ms
+t timing done
+== regress gemma4 (00:55:29)
+== regress gemma4 exit 0 (00:57:02)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 11.6s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+-- oom lines (job safety net):
+== summary: pytest=0 timing=0 regress_gemma4=0
+== end 00:57:02
