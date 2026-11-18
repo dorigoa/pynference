@@ -48,15 +48,19 @@ DUMP_TOKENS = [760, 6511, 314, 9338, 369]  # the S23-1 dump prompt
 TOL_COS = 0.999
 
 
+def _host(a):
+    if isinstance(a, torch.Tensor):
+        a = a.detach().to("cpu").numpy()
+    return np.asarray(a, dtype=np.float64).ravel()
+
+
 def _rel_err(a, b):
-    a = np.asarray(a, dtype=np.float64).ravel()
-    b = np.asarray(b, dtype=np.float64).ravel()
+    a, b = _host(a), _host(b)
     return float(np.linalg.norm(a - b) / np.linalg.norm(b))
 
 
 def _cos(a, b):
-    a = np.asarray(a, dtype=np.float64).ravel()
-    b = np.asarray(b, dtype=np.float64).ravel()
+    a, b = _host(a), _host(b)
     return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
@@ -82,8 +86,10 @@ def test_gather_rows_on_device_matches_cpu_reference():
 def test_ple_real_layer_device_vs_cpu():
     g = GGUFFile(MODEL)
     try:
-        key_raw = np.ascontiguousarray(g.rows("blk.1.ple_key.weight", 0, 10240))
-        val_raw = np.ascontiguousarray(g.rows("blk.1.ple_value.weight", 0, 2560))
+        # .copy() detaches from the mmap so g.close() succeeds and the
+        # buffers stay valid for the device-side make_qweight below.
+        key_raw = np.ascontiguousarray(g.rows("blk.1.ple_key.weight", 0, 10240)).copy()
+        val_raw = np.ascontiguousarray(g.rows("blk.1.ple_value.weight", 0, 2560)).copy()
         assert g.tensors["blk.1.ple_key.weight"].type == "Q8_0"
         f32 = lambda name: g.raw(name).view(np.float32)
         nk = f32("blk.1.ple_norm_key.weight").reshape(4, 2560).copy()

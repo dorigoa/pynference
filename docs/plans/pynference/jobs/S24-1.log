@@ -1,0 +1,19 @@
+== start 15:58:07
+== chain exit 0 (15:58:12)
+1 passed in 4.06s
+== gpu_s24 exit 1 (15:58:19)
+FAILED tests/gpu/test_qwen4exp_ple.py::test_ple_real_layer_device_vs_cpu - Bu...
+FAILED tests/gpu/test_qwen4exp_ple.py::test_ple_synthetic_device_agreement - ...
+4 failed, 1 passed in 6.37s
+== gpu_all exit 1 (16:02:04)
+FAILED tests/gpu/test_qwen4exp_hc.py::test_hc_synthetic_device_agreement - As...
+FAILED tests/gpu/test_qwen4exp_hc.py::test_hc_real_mixer_device_vs_cpu - Buff...
+FAILED tests/gpu/test_qwen4exp_ple.py::test_ple_real_layer_device_vs_cpu - Bu...
+FAILED tests/gpu/test_qwen4exp_ple.py::test_ple_synthetic_device_agreement - ...
+4 failed, 129 passed, 1 skipped, 1 warning in 224.32s (0:03:44)
+== regress exit 0 (16:04:29)
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== summary: chain 0 gpu_s24 1 gpu_all 1 regress 0
