@@ -1,0 +1,12 @@
+== start 19:12:41
+== kernels_selftest exit 0 (19:12:46)
+qsa_attn_decode Hq=4 Hkv=2 D=32 M=40: 1.19e-07
+qsa_attn_decode Hq=24 Hkv=2 D=256 M=2054: 7.45e-08
+== gpu_qsa exit 0 (19:12:51)
+drift prefill T=64: 1.79e-07 near-tie 2/64
+.drift prefill T=126: 2.60e-05 near-tie 0/126
+.....drift decode N=8: 1.64e-07 near-tie (keep-set/output skipped, counted)
+7 passed in 4.27s
+== gpu_all exit 0 (19:16:37)
+140 passed, 1 skipped, 1 warning in 225.04s (0:03:45)
+== summary: kernels_selftest 0 gpu_qsa 0 gpu_all 0
