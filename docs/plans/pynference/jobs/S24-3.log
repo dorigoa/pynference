@@ -1,0 +1,12 @@
+== start 16:24:38
+== gpu_s24 exit 0 (16:24:45)
+.....                                                                    [100%]
+5 passed in 5.92s
+== gpu_all exit 0 (16:28:29)
+133 passed, 1 skipped, 1 warning in 222.94s (0:03:42)
+== regress exit 0 (16:30:37)
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== summary: gpu_s24 0 gpu_all 0 regress 0
