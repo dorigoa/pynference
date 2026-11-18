@@ -1,0 +1,15 @@
+== start 18:38:40
+== kernels_selftest exit 0 (18:38:47)
+qsa_attn_decode Hq=4 Hkv=2 D=32 M=40: 1.19e-07
+qsa_attn_decode Hq=24 Hkv=2 D=256 M=2054: 8.94e-08
+== gpu_qsa exit 1 (18:38:53)
+FAILED tests/gpu/test_qwen4exp_qsa.py::test_qsa_attn_decode_kernel[dtype1-4-2-32-512-40]
+FAILED tests/gpu/test_qwen4exp_qsa.py::test_qsa_attn_decode_kernel[dtype1-24-2-256-4096-2054]
+6 failed, 1 passed in 6.05s
+== gpu_all exit 1 (18:42:39)
+FAILED tests/gpu/test_qwen4exp_qsa.py::test_qsa_attn_decode_kernel[dtype0-4-2-32-512-40]
+FAILED tests/gpu/test_qwen4exp_qsa.py::test_qsa_attn_decode_kernel[dtype0-24-2-256-4096-2054]
+FAILED tests/gpu/test_qwen4exp_qsa.py::test_qsa_attn_decode_kernel[dtype1-4-2-32-512-40]
+FAILED tests/gpu/test_qwen4exp_qsa.py::test_qsa_attn_decode_kernel[dtype1-24-2-256-4096-2054]
+6 failed, 134 passed, 1 skipped, 1 warning in 224.38s (0:03:44)
+== summary: kernels_selftest 0 gpu_qsa 1 gpu_all 1
