@@ -12,7 +12,7 @@ os.environ.setdefault("TRITON_INTERPRET", "1")
 import numpy as np
 
 from pynference.models.qwen35 import (Qwen35Config, head_parity_rows,
-                                      merge_runs, qkv_parity_runs)
+                                      merge_runs, qkv_parity_runs, split_run)
 
 
 class _T:
@@ -104,6 +104,18 @@ def test_qkv_parity_runs():
             assert list(vrows) == [(int(j), 1) for j in ids]
     # world=1: the qkv gather is the identity (single contiguous run)
     assert qkv_parity_runs(16, 48, 128, 1, 0)[0] == [(0, 10240)]
+
+
+def test_split_run_tiles():
+    # (start, len) runs of every rank tile [0, n) exactly once, and are
+    # length n/world (S21-1: tp.split's (start, end) leaked into _q_rows)
+    for world in (1, 2, 4):
+        for n in (10240, 17408, 6144, 24576):
+            assert n % world == 0
+            runs = [split_run(n, world, r) for r in range(world)]
+            assert all(l == n // world for _, l in runs)
+            covered = [i for a, l in runs for i in range(a, a + l)]
+            assert covered == list(range(n))
 
 
 def test_local_key_rule_matches_global_mod():

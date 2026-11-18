@@ -116,6 +116,16 @@ def merge_runs(runs: list[list[int]]) -> list[tuple[int, int]]:
     return [tuple(r) for r in out]
 
 
+def split_run(n: int, world: int, rank: int) -> tuple[int, int]:
+    """This rank's contiguous slice of a dimension of size n as a
+    (start, len) run. tp.split returns (start, end) but _q_rows/_q_cols take
+    (start, len): feeding the former straight in breaks every rank > 0
+    (S21-1: rank 1 read past the tensor into the next one)."""
+    assert n % world == 0, (n, world)
+    s = n // world
+    return rank * s, s
+
+
 def head_parity_rows(n_heads: int, head_dim: int, world: int, rank: int) -> list[tuple[int, int]]:
     """Output-row runs (start, len) of the head rows this rank keeps: heads
     j with j % world == rank, in global order, merged when adjacent (S19
@@ -177,7 +187,7 @@ class Qwen35:
         t0 = time.time()
 
         self.v0, self.v1 = tp.split(c.n_vocab)
-        self.embed = self._q_rows("token_embd.weight", [tp.split(c.n_vocab)])
+        self.embed = self._q_rows("token_embd.weight", [split_run(c.n_vocab, tp.world, tp.rank)])
         self.lm_head = self.embed                          # tied, one copy (Mappa B.9)
         self.output_norm = self._f32("output_norm.weight")
         self.cos, self.sin = rope_table(c.n_rot, c.rope_base, max_ctx, dev)
@@ -245,19 +255,19 @@ class Qwen35:
         L.is_attn = c.is_attn[il]
         L.attn_norm = self._f32(p + "attn_norm.weight")
         L.post_attn_norm = self._f32(p + "post_attention_norm.weight")
-        fr = tp.split(c.ffn)                               # 8704 = 34 x 256, Q8_0-safe
+        fr = split_run(c.ffn, tp.world, tp.rank)          # 8704 = 34 x 256, Q8_0-safe
         L.ffn_gate = self._q_rows(p + "ffn_gate.weight", [fr])
         L.ffn_up = self._q_rows(p + "ffn_up.weight", [fr])
         L.ffn_down = self._q_cols(p + "ffn_down.weight", [fr])
         if L.is_attn:
             # heads split contiguously: rank r takes heads r*n_head_l.., the
             # q|gate 512-row interleave stays intact (Mappa B.2)
-            L.q = self._q_rows(p + "attn_q.weight", [tp.split(2 * c.n_head * c.head_dim)])
-            L.k = self._q_rows(p + "attn_k.weight", [tp.split(c.n_head_kv * c.head_dim)])
-            L.v = self._q_rows(p + "attn_v.weight", [tp.split(c.n_head_kv * c.head_dim)])
+            L.q = self._q_rows(p + "attn_q.weight", [split_run(2 * c.n_head * c.head_dim, tp.world, tp.rank)])
+            L.k = self._q_rows(p + "attn_k.weight", [split_run(c.n_head_kv * c.head_dim, tp.world, tp.rank)])
+            L.v = self._q_rows(p + "attn_v.weight", [split_run(c.n_head_kv * c.head_dim, tp.world, tp.rank)])
             L.q_norm = self._f32(p + "attn_q_norm.weight")
             L.k_norm = self._f32(p + "attn_k_norm.weight")
-            L.o = self._q_cols(p + "attn_output.weight", [tp.split(c.n_head * c.head_dim)])
+            L.o = self._q_cols(p + "attn_output.weight", [split_run(c.n_head * c.head_dim, tp.world, tp.rank)])
         else:
             qkv_runs, value_runs, head_ids, head_rows = qkv_parity_runs(
                 c.n_key_heads, c.n_value_heads, c.ssm_state, tp.world, tp.rank)

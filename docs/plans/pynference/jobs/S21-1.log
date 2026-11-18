@@ -1,0 +1,45 @@
+== start 02:25:53
+== pytest gpu exit 0 (02:29:42)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+128 passed, 1 skipped, 1 warning in 228.53s (0:03:48)
+dump: 92947 lines in results/jobs/S21-1/dump.txt
+== llama dump exit 0 (02:30:46)
+0.30.707.135 I number of input tokens = 7
+== ours dump exit 1 (02:32:12)
+  host      : ubuntu
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 3897363) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+== dump compare exit 1 (02:32:12)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/results/jobs/S21-1/cmp_dump.py", line 29, in <module>
+    ours = json.load(open(sys.argv[2]))
+                     ~~~~^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S21-1/ours_layers.json'
+== ours exit 1 (02:33:00)
+  qwen35: load done in 36.0s
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 3898510) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+== diff strict exit 1 (02:33:01)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/results/jobs/S21-1/run_bench.py", line 12, in <module>
+    mod.main()
+    ~~~~~~~~^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 192, in main
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S21-1/ours.json'
+== ppl exit 1 (02:33:38)
+PPL_EXTRACT_FAIL
+== ppl compare exit 3 (02:33:38)
+== summary: pytest=0 dump=0 odump=1 dumpcmp=1 ours=1 diff=1 ppl=1 pplcmp=3
+== end 02:33:38
