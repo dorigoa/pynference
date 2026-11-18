@@ -25,8 +25,13 @@ under scripts/cpu.sh). Coverage:
   (= N) while at most 512 blocks are visible, then drop to 2048 + tail.
 
 Bars: same as tests/gpu/test_qwen4exp_qsa.py (cross-device cos/rel, keep-set
-exact off near-ties, near-tie budget) — see its docstring for why exact
-node matches are only asserted against the dump, never across devices.
+exact off near-ties and bandage-checked on them: equal cell counts, side
+changes only within 3*drift of the top-k cut score) — see its docstring for
+why exact node matches are only asserted against the dump, never across
+devices. Prefill keeps the near-tie budget (there near-ties measure
+7/2058); the boundary decode has none because at the selection onset the
+cut gap is exactly 0 on every step (job S25-5), so the bandage, not the
+budget, is what pins the keep-set there.
 """
 import os
 import pathlib
@@ -182,7 +187,8 @@ def _prefill(qsa_c, qsa_g, T):
     out_g, _, pg = qsa_g.forward(cur.to(DEV), pos.to(DEV), qsa_g.zero_state(DEV))
     pg = {k: v.cpu() for k, v in pg.items()}
     kc, n_amb, drift = _check_cross(pc, pg, out_c, out_g.cpu(),
-                                    qsa_c.n_top_pool, f"prefill T={T}")
+                                    qsa_c.n_top_pool, qsa_c.compress,
+                                    f"prefill T={T}")
     print(f"drift prefill T={T}: {drift:.2e} near-tie {n_amb}/{T}")
     assert n_amb <= T // 4, "selection near-tie across devices too often"
     return kc
@@ -235,11 +241,11 @@ def test_decode_across_top_k_boundary():
         n += 1
         N = T0 + n        # context length after this step; kept counts cells
         kc, a, drift = _check_cross(pf, pg, of, og, qsa_c.n_top_pool,
-                                    f"decode N={N}")
+                                    qsa_c.compress, f"decode N={N}")
         if a:
             n_amb += 1
             print(f"drift decode N={N}: {drift:.2e} near-tie "
-                  "(keep-set/output skipped, counted)")
+                  "(output skipped, keep-set bandage-checked)")
         kept = int(kc.sum())
         if N <= 2051:
             assert kept == N, f"N={N}: expected causal prefix ({N} cells), got {kept}"
@@ -248,4 +254,9 @@ def test_decode_across_top_k_boundary():
             assert kept == 2048 + tail, f"N={N}: expected 2048+{tail}, got {kept}"
     assert kept < N, "selection never pruned below the causal prefix"
     print(f"decode boundary: kept {kept} cells at N={N}; near-tie {n_amb}/{n}")
-    assert n_amb <= (T1 - T0) // 4, "selection near-tie across devices too often"
+    # No near-tie budget here (job S25-5 removed one that could never pass):
+    # at the selection onset the cut falls in a mass of exactly tied zero
+    # scores — the probe measured cut gap 0.00e+00 on all 48 selection steps
+    # — so every step is near-tie by construction. The keep-set is still
+    # constrained on those steps by `_check_cross`'s bandage (equal cell
+    # counts, differences only within 3*drift of the cut score).

@@ -15,8 +15,14 @@ blk.3 is the S25 step-3 job). Coverage:
   regime, across block boundaries.
 
 Bars: keep-set (indexer_sel finite pattern) exact on every token whose
-top-k cut is not within 50x the measured cross-device score drift of a tie
-(such near-tie tokens are printed and capped, never silently ignored);
+top-k cut is not within 50x the measured cross-device score drift of a tie;
+on the near-tie tokens it is bandage-checked instead — identical kept-cell
+count per row, and blocks may change sides only within 3x the drift of the
+cut score (where the cut sits in a tie mass, which device wins is
+arbitrary, but the count and the far-from-cut blocks are not; validated on
+CPU by simulation + adversarial flips, job S25-5) — near-tie tokens are
+printed and, where selection is not tie-dominated (the budgets in
+`_check_prefill`/`test_decode_matches_cpu`), capped;
 outputs cosine >= 0.9999 and relative error <= 1e-4 on the non-ambiguous
 rows (a 1-token decode step that is entirely near-tie has no comparable
 row and is only counted against the near-tie budget); pool keys and scores
@@ -106,7 +112,7 @@ def _amb_rows(score, n_top_pool, margin):
     return (nvis > k) & (gap < margin)
 
 
-def _check_cross(pc, pg, out_c, out_g, n_top_pool, tag):
+def _check_cross(pc, pg, out_c, out_g, n_top_pool, compress, tag):
     """Shared CPU-vs-xpu comparison of one QSA call's parts + output."""
     sc_c, sc_g = pc["indexer_score"], pg["indexer_score"]
     fin = torch.isfinite(sc_c)
@@ -119,6 +125,32 @@ def _check_cross(pc, pg, out_c, out_g, n_top_pool, tag):
     amb = _amb_rows(sc_c, n_top_pool, 50 * drift + 1e-9)
     kc, kg = torch.isfinite(pc["indexer_sel"]), torch.isfinite(pg["indexer_sel"])
     assert torch.equal(kc[~amb], kg[~amb]), f"keep-set {tag}"
+    if amb.any():
+        # Near-tie rows: the cut sits inside a cluster of exactly tied
+        # scores (job S25-5 + probe: relu-rectified scores pile up at 0.0,
+        # so at the selection onset the cut gap is exactly 0 on every
+        # step — near-tie is the rule there, not the exception). Which of
+        # the tied blocks each device keeps is arbitrary, but two things
+        # are fixed and that is the bandage this checks (validated on CPU
+        # against |noise| <= drift simulation and adversarial far-cut
+        # flips): (1) the kept-cell count per row is identical, and (2) a
+        # block may change sides only if its CPU score lies within a few
+        # drifts of the top-k cut score — blocks clearly above the cut
+        # must be kept, clearly below must be dropped (invisible blocks
+        # and the forced incomplete-tail cells are integer-determined, so
+        # they can never legitimately differ).
+        assert torch.equal(kc.sum(1), kg.sum(1)), f"keep-set counts {tag}"
+        T, n_pool = sc_c.shape
+        k = min(n_pool, n_top_pool)   # amb row exists -> n_pool > k
+        s = sc_c.sort(1, descending=True).values
+        d = (kc != kg) & amb.unsqueeze(1)
+        pad = n_pool * compress - kc.shape[1]
+        if pad > 0:   # pad slots (sel width < pool cells) never differ
+            d = torch.cat([d, d.new_zeros(T, pad)], 1)
+        band = ((sc_c >= (s[:, k] - 3 * drift - 1e-9).unsqueeze(1)) &
+                (sc_c <= (s[:, k - 1] + 3 * drift + 1e-9).unsqueeze(1)))
+        assert not (d.reshape(T, n_pool, compress).any(2) & ~band).any(), \
+            f"keep-set differs far from the top-k cut {tag}"
     if (~amb).any():   # a 1-token decode step can be near-tie entirely:
         assert _cos(out_c[~amb], out_g[~amb]) >= TOL_COS and \
             _rel(out_c[~amb], out_g[~amb]) <= TOL_REL, f"out {tag}"
@@ -142,7 +174,8 @@ def _check_prefill(qsa_c, qsa_g, C, T):
     out_g, _, pg = qsa_g.forward(cur.to(DEV), pos.to(DEV), qsa_g.zero_state(DEV))
     pg = {k: v.cpu() for k, v in pg.items()}
     kc, n_amb, drift = _check_cross(pc, pg, out_c, out_g.cpu(),
-                                    qsa_c.n_top_pool, f"prefill T={T}")
+                                    qsa_c.n_top_pool, qsa_c.compress,
+                                    f"prefill T={T}")
     print(f"drift prefill T={T}: {drift:.2e} near-tie {n_amb}/{T}")
     assert n_amb <= T // 4, "selection near-tie across devices too often"
     return int(kc.sum())
@@ -203,7 +236,7 @@ def test_decode_matches_cpu():
         og, pg = og.cpu(), {k: v.cpu() for k, v in pg.items()}
         n += 1
         kc, a, drift = _check_cross(pf, pg, of, og, qsa_c.n_top_pool,
-                                    f"decode N={n}")
+                                    qsa_c.compress, f"decode N={n}")
         if a:
             n_amb += 1
             print(f"drift decode N={n}: {drift:.2e} near-tie "

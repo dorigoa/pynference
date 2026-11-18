@@ -1,0 +1,33 @@
+== start 19:55:46
+== kernels_selftest exit 0 (19:55:51)
+qsa_attn_decode Hq=4 Hkv=2 D=32 M=40: 1.19e-07
+qsa_attn_decode Hq=24 Hkv=2 D=256 M=2054: 7.45e-08
+== gpu_qsa_ctx exit 1 (19:56:10)
+drift decode N=2092: 8.89e-05 near-tie (keep-set/output skipped, counted)
+drift decode N=2093: 4.74e-05 near-tie (keep-set/output skipped, counted)
+drift decode N=2094: 5.54e-05 near-tie (keep-set/output skipped, counted)
+drift decode N=2095: 4.32e-05 near-tie (keep-set/output skipped, counted)
+drift decode N=2096: 4.21e-05 near-tie (keep-set/output skipped, counted)
+drift decode N=2097: 7.10e-05 near-tie (keep-set/output skipped, counted)
+drift decode N=2098: 5.76e-05 near-tie (keep-set/output skipped, counted)
+drift decode N=2099: 5.21e-05 near-tie (keep-set/output skipped, counted)
+decode boundary: kept 2051 cells at N=2099; near-tie 48/59
+        n = n_amb = kept = 0
+            N = T0 + n        # context length after this step; kept counts cells
+            kc, a, drift = _check_cross(pf, pg, of, og, qsa_c.n_top_pool,
+                print(f"drift decode N={N}: {drift:.2e} near-tie "
+            kept = int(kc.sum())
+                assert kept == N, f"N={N}: expected causal prefix ({N} cells), got {kept}"
+                assert kept == 2048 + tail, f"N={N}: expected 2048+{tail}, got {kept}"
+        assert kept < N, "selection never pruned below the causal prefix"
+        print(f"decode boundary: kept {kept} cells at N={N}; near-tie {n_amb}/{n}")
+FAILED tests/gpu/test_qwen4exp_qsa_ctx.py::test_decode_across_top_k_boundary
+1 failed, 3 passed in 18.16s
+== gpu_all exit 1 (20:00:07)
+FAILED tests/gpu/test_qwen4exp_qsa_ctx.py::test_decode_across_top_k_boundary
+1 failed, 143 passed, 1 skipped, 1 warning in 235.99s (0:03:55)
+== regress exit 0 (20:03:11)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 18.8s)
+PASS
+PASS
+== summary: kernels_selftest 0 gpu_qsa_ctx 1 gpu_all 1 regress 0
