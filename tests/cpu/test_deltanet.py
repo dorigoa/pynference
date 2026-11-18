@@ -10,6 +10,15 @@ kernel in step 2 is only correct if it reproduces the prefill state.
 
 Random data only; the real-weight checks are the GPU job of step 4.
 """
+import os
+
+# pynference.deltanet imports Triton at module level, and this file is
+# collected before test_gptoss_attn.py / test_quant_decode_interp.py
+# (alphabetical order): the S15 TRITON_INTERPRET contract wants the env var
+# set before the first Triton import of the pytest process, or the
+# interpreted tests collected after this one lose interpreter mode.
+os.environ["TRITON_INTERPRET"] = "1"
+
 import numpy as np
 import torch
 
