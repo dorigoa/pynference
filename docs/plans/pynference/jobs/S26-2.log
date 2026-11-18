@@ -1,0 +1,60 @@
+== start 21:53:58
+MemTotal:       63655308 kB
+MemAvailable:   60778560 kB
+GPUActive:          3752 kB
+== probe.py compiles
+-- probe staged8 8 GiB env: none (21:53:58)
+   exit 0
+PROBE staged8 conf-check unavailable: AttributeError: module 'torch.xpu' has no attribute 'get_allocator_settings'
+PROBE staged8 stage=init dGPUActive=+0.00 dMemAvail=+0.00 reserved=0.02
+PROBE staged8 stage=alloc dGPUActive=+8.00 dMemAvail=-7.97 reserved=8.02
+PROBE staged8 stage=h2d dGPUActive=+7.93 dMemAvail=-16.05 reserved=8.02
+PROBE staged8 stage=kernel dGPUActive=+7.93 dMemAvail=-8.16 reserved=8.02
+VERDICT staged8 nomirror=0 worst_dMemAvail=-7.97
+-- probe staged24 24 GiB env: none (21:54:13)
+   exit 0
+PROBE staged24 conf-check unavailable: AttributeError: module 'torch.xpu' has no attribute 'get_allocator_settings'
+PROBE staged24 stage=init dGPUActive=+0.00 dMemAvail=+0.00 reserved=0.02
+PROBE staged24 stage=alloc dGPUActive=+23.93 dMemAvail=-24.15 reserved=24.02
+PROBE staged24 stage=h2d dGPUActive=+47.94 dMemAvail=-57.16 reserved=24.02
+PROBE staged24 stage=kernel dGPUActive=+47.94 dMemAvail=-47.70 reserved=24.02
+VERDICT staged24 nomirror=0 worst_dMemAvail=-24.15
+-- probe expandable8 8 GiB PYTORCH_ALLOC_CONF=expandable_segments:True (21:56:28)
+   exit 0
+PROBE expandable8 conf-check unavailable: AttributeError: module 'torch.xpu' has no attribute 'get_allocator_settings'
+PROBE expandable8 stage=init dGPUActive=+0.00 dMemAvail=+0.00 reserved=0.02
+PROBE expandable8 stage=alloc dGPUActive=+0.00 dMemAvail=-0.03 reserved=8.03
+PROBE expandable8 stage=h2d dGPUActive=+0.00 dMemAvail=-8.21 reserved=8.03
+PROBE expandable8 stage=kernel dGPUActive=+0.00 dMemAvail=-0.58 reserved=8.03
+VERDICT expandable8 nomirror=1 worst_dMemAvail=-0.03
+-- probe expandable24 24 GiB PYTORCH_ALLOC_CONF=expandable_segments:True (21:56:33)
+   exit 0
+PROBE expandable24 conf-check unavailable: AttributeError: module 'torch.xpu' has no attribute 'get_allocator_settings'
+PROBE expandable24 stage=init dGPUActive=+0.00 dMemAvail=+0.00 reserved=0.02
+PROBE expandable24 stage=alloc dGPUActive=+0.00 dMemAvail=-0.08 reserved=24.02
+PROBE expandable24 stage=h2d dGPUActive=+0.00 dMemAvail=-24.05 reserved=24.02
+PROBE expandable24 stage=kernel dGPUActive=+0.00 dMemAvail=-0.19 reserved=24.02
+VERDICT expandable24 nomirror=1 worst_dMemAvail=-0.08
+== LEVER: expandable_segments nomirror — gpt-oss regress under the conf (21:56:40)
+MemAvailable:   59938628 kB
+GPUActive:          3820 kB
+== regress exit 1 (21:57:23)
+== regress gpt-oss-120b: ours --ref (fused) 21:56:40
+  host      : ubuntu
+  rank      : 0 (local_rank: 0)
+  exitcode  : -6 (pid: 958205)  (SIGABRT)
+  error_file: <N/A>
+  traceback : Signal 6 (SIGABRT) received by PID 958205
+=======================================================
+== ours exit 1 (21:57:09)
+== regress gpt-oss-120b: ppl 21:57:09
+== ppl exit 1 (21:57:23)
+Traceback (most recent call last):
+  File "<stdin>", line 7, in <module>
+FileNotFoundError: [Errno 2] No such file or directory: '/tmp/pynference-regress-gXdi/ours_now.json'
+FAIL
+MemAvailable:   60890156 kB
+GPUActive:           724 kB
+MemAvailable:   60890156 kB
+GPUActive:           724 kB
+== end 21:57:23
