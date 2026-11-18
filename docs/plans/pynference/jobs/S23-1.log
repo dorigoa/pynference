@@ -1,0 +1,42 @@
+== start 13:00:20
+llama-server up on 8091
+== server-start exit 0 (13:01:30)
+tokens.json: 14 cases
+template.json: 2 prompts
+ref_probs chat-it: 'We need answer user\'s request in Italian: "Qual è la capitale d\'Italia? Rispondi'
+ref_probs chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+ref_probs code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+ref_probs raw: ' Octavian, later known as Augustus, became the first Roman emperor, marking the '
+ref_probs.json: done
+== golden exit 0 (13:02:00)
+template.json: +4 enable_thinking variants
+== template-thinking exit 0 (13:02:01)
+== server-stop exit 0 (13:02:03)
+llama-server up on 8091
+== server-start-off exit 0 (13:02:38)
+template.json: 2 thinking-0 variants re-rendered
+== template-fix exit 0 (13:02:38)
+== server-stop exit 0 (13:02:40)
+1.50.119.972 I Final estimate: PPL = 1.0002 +/- 0.00008
+== ppl exit 0 (13:04:32)
+dump: 133498 lines in results/jobs/S23-1/dump.txt
+== dump exit 0 (13:05:23)
+dump has hc_norm-0
+dump has hc_mixed-0
+dump has linear_attn_out-0
+dump has ffn_out-0
+dump has ple_gate-1
+dump has ple_conv_out-1
+dump has indexer_score-3
+MISSING kqv_out-3
+dump has attn_output-3
+dump has result_output
+total 8068
+-rw-rw-r-- 1 alvise alvise 8146330 Nov 18 13:05 dump.txt
+-rw-rw-r-- 1 alvise alvise    1349 Nov 18 13:02 llama-server-8091.log
+-rw-rw-r-- 1 alvise alvise    1075 Nov 18 13:04 ref_ppl.log
+-rw-rw-r-- 1 alvise alvise      56 Nov 18 13:04 ref_ppl.txt
+-rw-rw-r-- 1 alvise alvise   92106 Nov 18 13:02 ref_probs.json
+-rw-rw-r-- 1 alvise alvise    2943 Nov 18 13:02 template.json
+-rw-rw-r-- 1 alvise alvise    2182 Nov 18 13:01 tokens.json
+== end 13:05:23

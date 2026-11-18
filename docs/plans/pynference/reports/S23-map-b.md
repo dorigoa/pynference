@@ -89,7 +89,8 @@ order.
 2. K,V → cache; q current, k/v gathered from cache.
 3. `sel` replaces the causal kq_mask: reshaped across the K-view streams →
    `kq_mask_qsa`; dense GQA MHA `build_attn_mha(q,k,v, mask=sel, n_sel)` →
-   `kqv_out`. No softcap, no sink; the mask already encodes causality
+   `kqv_out` — cb-renamed to `attn_pregate` right after (same tensor). No
+   softcap, no sink; the mask already encodes causality
    (all kept cells are in the token's past, comment 878).
 
 ## cb() names for dumps (layer il=3)
@@ -97,14 +98,18 @@ order.
 `indexer_k_raw`, `indexer_pool_k_new` (partial, per ubatch), `indexer_k`,
 `indexer_q`, `indexer_score`, `indexer_top_k`, `indexer_sel`,
 `Qcur_full`, `Qcur_reshaped`, `Qcur_normed`, `Kcur`, `Kcur_normed`, `Vcur`,
-`gate_reshaped`, `Qcur`, `Kcur`, `Vcur`, `kq_mask_qsa`, `kqv_out`,
+`gate_reshaped`, `Qcur`, `Kcur`, `Vcur`, `kq_mask_qsa`,
 `attn_pregate`, `gate_sigmoid`, `attn_gated`, `attn_output`.
+Verified on job S23-1 dump: `kqv_out` never appears — the cb name on the
+MHA result is overwritten by the outer `cb(cur, "attn_pregate")`
+(`ggml_format_name` overwrites); in the dump the FLASH_ATTN_EXT node is
+unnumbered-named (`node_NNNN`) and `attn_pregate-3` is the reshape of it.
 
 ## Notes for S25
 
 - Dump comparison: pooled-key pooling and top-k are cache-stateful; easiest
   dump target is a single short prompt in one ubatch (prefill covers
-  `indexer_k_raw`, `indexer_q`, `indexer_score`, mask, `kqv_out`).
+  `indexer_k_raw`, `indexer_q`, `indexer_score`, mask, `attn_pregate`).
 - Selection is by score with ties unordered: compare the keep-SET, not
   ordering. `ggml_top_k` pads with -inf rows when n_pool < 512 (dead slots →
   dump rows; live test: score >= 0).
