@@ -1,0 +1,68 @@
+== start 22:29:26
+MemTotal:       63655308 kB
+MemAvailable:   60831012 kB
+GPUActive:          3752 kB
+== regress gpt-oss-120b (22:29:26)
+22:29:26 MemAvailable:   60826556 kB GPUActive:          3752 kB 
+22:29:29 MemAvailable:   59484232 kB GPUActive:        144040 kB 
+22:29:32 MemAvailable:   55479184 kB GPUActive:       2958120 kB 
+22:29:35 MemAvailable:   55847668 kB GPUActive:       2958120 kB 
+22:29:38 MemAvailable:   55820384 kB GPUActive:       2958120 kB 
+22:29:41 MemAvailable:   55540952 kB GPUActive:       2958120 kB 
+22:29:44 MemAvailable:   55517444 kB GPUActive:       2958120 kB 
+22:29:47 MemAvailable:   55463444 kB GPUActive:       2890192 kB 
+22:29:50 MemAvailable:   55423360 kB GPUActive:       2813968 kB 
+22:29:53 MemAvailable:   55378948 kB GPUActive:       2813968 kB 
+22:29:56 MemAvailable:   55602980 kB GPUActive:       2813968 kB 
+22:30:00 MemAvailable:   53816664 kB GPUActive:       2834232 kB 
+22:30:03 MemAvailable:   50432964 kB GPUActive:       3902392 kB 
+22:30:06 MemAvailable:   48289856 kB GPUActive:       5415168 kB 
+22:30:09 MemAvailable:   45708972 kB GPUActive:       7966976 kB 
+22:30:12 MemAvailable:   43662604 kB GPUActive:       9987392 kB 
+22:30:15 MemAvailable:   43409392 kB GPUActive:       9988780 kB 
+22:30:18 MemAvailable:   43418388 kB GPUActive:       9989632 kB 
+22:30:21 MemAvailable:   43391492 kB GPUActive:       9989632 kB 
+22:30:24 MemAvailable:   43358980 kB GPUActive:      10010112 kB 
+22:30:27 MemAvailable:   43416236 kB GPUActive:      10010112 kB 
+22:30:30 MemAvailable:   43378876 kB GPUActive:      10010476 kB 
+22:30:33 MemAvailable:   43287792 kB GPUActive:      10010112 kB 
+22:30:36 MemAvailable:   60504072 kB GPUActive:          3752 kB 
+22:30:39 MemAvailable:   58748732 kB GPUActive:        144040 kB 
+22:30:42 MemAvailable:   55326228 kB GPUActive:       2939688 kB 
+22:30:45 MemAvailable:   55106164 kB GPUActive:       2939968 kB 
+22:30:48 MemAvailable:   55102372 kB GPUActive:       2939688 kB 
+22:30:51 MemAvailable:   55596376 kB GPUActive:       2939688 kB 
+22:30:54 MemAvailable:   55648992 kB GPUActive:       2935824 kB 
+22:30:57 MemAvailable:   55627848 kB GPUActive:       2935824 kB 
+22:31:00 MemAvailable:   55692548 kB GPUActive:       2938248 kB 
+22:31:03 MemAvailable:   50166268 kB GPUActive:       4323320 kB 
+22:31:06 MemAvailable:   49313780 kB GPUActive:       4552960 kB 
+22:31:09 MemAvailable:   47239944 kB GPUActive:       6594816 kB 
+22:31:12 MemAvailable:   44837956 kB GPUActive:       8960256 kB 
+22:31:15 MemAvailable:   39629868 kB GPUActive:      13931920 kB 
+22:31:18 MemAvailable:   38866336 kB GPUActive:      14738688 kB 
+22:31:21 MemAvailable:   38046244 kB GPUActive:      15545600 kB 
+22:31:24 MemAvailable:   38022752 kB GPUActive:      15547648 kB 
+22:31:27 MemAvailable:   37973304 kB GPUActive:      15547648 kB 
+22:31:30 MemAvailable:   38027720 kB GPUActive:      15547700 kB 
+22:31:33 MemAvailable:   38022168 kB GPUActive:      15547648 kB 
+== regress exit 1 (22:31:36)
+0
+TOGGLE NOT SEEN
+awk: fatal: cannot open file `results/jobs/S26-4/meminfo_regress.log' for reading: No such file or directory
+raw: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years,'
+== ours exit 0 (22:30:35)
+== regress gpt-oss-120b: ppl 22:30:35
+== ppl exit 0 (22:31:35)
+Final estimate: PPL = 1.6095 +/- 0.04047  (2040 scored tokens, 33.9s)
+chat-it: max |dp| 4.92e-05 over top-10
+chat-en: max |dp| 1.37e-04 over top-10
+code: max |dp| 8.80e-05 over top-10
+raw: max |dp| 6.43e-05 over top-10
+ppl: baseline 1.6095, now 1.6095, rel diff 0.000%
+FAIL: chat-it: top-10 ids differ at step 16
+FAIL
+== regress red: skipping decode_profile (22:31:36)
+MemAvailable:   60833120 kB
+GPUActive:          3752 kB
+== end 22:31:36
