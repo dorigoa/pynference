@@ -1,0 +1,33 @@
+== start 23:09:21
+MemTotal:       63655308 kB
+MemAvailable:   60828432 kB
+GPUActive:          3836 kB
+== regress gpt-oss-120b (23:09:21)
+== regress gpt-oss exit 0 (23:11:40) (atteso 0)
+toggle markers: 0 (atteso >=1)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 0.00e+00 over top-10
+ppl: baseline 1.6095, now 1.6095, rel diff 0.000%
+PASS
+PASS
+floor MemAvailable 39.47 GiB, max GPUActive 14.83 GiB
+== pytest tests/gpu (23:11:40)
+== pytest gpu exit 0 (23:15:46) (atteso 0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+144 passed, 1 skipped, 1 warning in 244.73s (0:04:04)
+== regress gemma4 (23:15:46)
+== gemma4 exit 0 (23:17:27) (atteso 0)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== summary regress=0 pytestgpu=0 gemma4=0 23:17:27
+MemAvailable:   60859600 kB
+GPUActive:          3752 kB
+== end 23:17:27
