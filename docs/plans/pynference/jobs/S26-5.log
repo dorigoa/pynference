@@ -1,0 +1,77 @@
+== start 22:55:47
+MemTotal:       63655308 kB
+MemAvailable:   60783492 kB
+GPUActive:          3780 kB
+== A ours S26 regime full-log (22:55:47)
+== A ours exit 0 (22:56:56)
+A toggle markers: 2 (atteso >=1)
+  MoE: 128 experts x 36 layers, budget 20.00 GB (dense 1.34, kv 0.02, scratch 1.07)
+  store: expandable_segments on (no host-RAM mirror, S26)
+  store: layer 0 gate: 40 resident + 2 swap slots -> 185 MB
+  store: expandable_segments on (no host-RAM mirror, S26)
+  store: layer 0 gate: 40 resident + 2 swap slots -> 185 MB
+  store: layer 0 up: 40 resident + 2 swap slots -> 185 MB
+floor MemAvailable 41.36 GiB, max GPUActive 9.68 GiB
+chat-it: max |dp| 4.92e-05 over top-10
+chat-en: max |dp| 1.37e-04 over top-10
+code: max |dp| 8.80e-05 over top-10
+raw: max |dp| 6.43e-05 over top-10
+FAIL: chat-it: top-10 ids differ at step 16
+== A vs baseline rc 1 (22:56:56) (atteso: FAIL step 16 come S26-4)
+== A C8 diff --strict rc 0 (22:56:56)
+chat-it  same greedy tokens 24/24, max |dp| top-10 0.0484, mean partial KL 4.60e-04
+   ref:  '<|channel|>analysis<|message|>The user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in un'
+   ours: 'analysisThe user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase'
+chat-en  same greedy tokens 24/24, max |dp| top-10 0.0206, mean partial KL 5.48e-04
+   ref:  '<|channel|>analysis<|message|>We need to write a haiku about the sea. Haiku is 5-7-5 syll'
+   ours: 'analysisWe need to write a haiku about the sea. Haiku is 5-7-5 syll'
+code     same greedy tokens 24/24, max |dp| top-10 0.0308, mean partial KL 2.19e-04
+   ref:  '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+   ours: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+raw      same greedy tokens 24/24, max |dp| top-10 0.0265, mean partial KL 2.30e-03
+   ref:  ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+   ours: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+C8 strict: PASS
+== B ours S18-regime control (22:56:56)
+== B ours exit 0 (22:58:42)
+B toggle markers: 0 (atteso 0)
+  store: layer 0 gate: 35 resident + 2 swap slots -> 163 MB
+  MoE: 128 experts x 36 layers, budget 17.27 GB (dense 1.34, kv 0.02, scratch 1.07)
+  store: layer 0 gate: 35 resident + 2 swap slots -> 163 MB
+  store: layer 0 up: 35 resident + 2 swap slots -> 163 MB
+floor MemAvailable 8.88 GiB, max GPUActive 41.85 GiB
+chat-it: max |dp| 2.61e-04 over top-10
+chat-en: max |dp| 1.26e-04 over top-10
+code: max |dp| 3.45e-05 over top-10
+raw: max |dp| 6.98e-05 over top-10
+PASS
+== B vs baseline rc 0 (22:58:42) (atteso: PASS, dp = S18-3/4)
+== decode graph short ctx 8192 (22:58:42)
+== graph short exit 0 (22:59:33)
+  store: expandable_segments on (no host-RAM mirror, S26)
+  MoE: 128 experts x 36 layers, budget 19.86 GB (dense 1.34, kv 0.15, scratch 1.07)
+  store: expandable_segments on (no host-RAM mirror, S26)
+  MoE: 1430 of 2304 local experts resident, 72 swap slots, store 19.86 GB, pinned 0.00 GB
+[graph] wall time per token: 119.0 ms (8.40 tok/s)
+store: hits 2921 misses 1097 copied 13.51 GiB; resident 1430/1502 slots
+floor MemAvailable 40.80 GiB, max GPUActive 10.26 GiB
+== decode graph prompt 2000 tok (22:59:33)
+== graph long exit 0 (23:00:25)
+  gpt-oss: load done in 12.7s
+[graph] prefill 2000 tokens: 2.895 ms/token (345 token/s)
+[graph] wall time per token: 120.7 ms (8.29 tok/s)
+store: hits 4954 misses 2808 copied 34.57 GiB; resident 1430/1502 slots
+floor MemAvailable 39.64 GiB, max GPUActive 11.17 GiB
+== regress gemma4 (23:00:25)
+== gemma4 exit 0 (23:02:50)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== summary A_rc=0 C8_rc=0 B_rc=0 gs=0 gl=0 23:02:50
+MemAvailable:   60811124 kB
+GPUActive:          4016 kB
+== end 23:02:50
