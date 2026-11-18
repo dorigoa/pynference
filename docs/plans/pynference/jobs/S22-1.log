@@ -1,0 +1,15 @@
+== start 10:31:58
+== torch60 exit 0 (10:34:27)
+[torch] prefill 41 tokens: 11.847 ms/token (84 token/s)
+[torch] wall time per token: 457.3 ms (2.19 tok/s)
+GPU kernel time per token: 1025.4 ms
+kernel                                                        ms/token  calls/token
+== fused60 exit 0 (10:35:50)
+[fused] prefill 41 tokens: 11.839 ms/token (84 token/s)
+[fused] wall time per token: 70.3 ms (14.23 tok/s)
+GPU kernel time per token: 159.1 ms
+kernel                                                        ms/token  calls/token
+== fused2000 exit 0 (10:36:55)
+[fused] prefill 2000 tokens: 2.466 ms/token (406 token/s)
+[fused] wall time per token: 71.3 ms (14.02 tok/s)
+== end 10:36:55
