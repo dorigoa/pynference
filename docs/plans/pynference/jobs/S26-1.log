@@ -1,0 +1,43 @@
+== start 20:55:48
+== baseline meminfo ==
+MemTotal:       63655308 kB
+MemAvailable:   60738684 kB
+GPUActive:          3752 kB
+== xe module params ==
+disable_display disable_power_well dmc_firmware_path edp_vswing enable_dc enable_dc_balance enable_dmc_wl enable_dpcd_backlight enable_dp_mst enable_dpt enable_dsb enable_fbc enable_flipq enable_ips enable_panel_replay enable_psr enable_psr2_sel_fetch enable_sagv force_probe force_reset_modeset_test gsc_firmware_path guc_firmware_path guc_log_level huc_firmware_path invert_brightness load_detect_test lvds_channel_mode max_vfs nuclear_pageflip panel_use_ssc probe_display psr_safest_params svm_notifier_size vbt_firmware vbt_sdvo_panel_type verbose_state_checks vram_bar_size wedged_mode 
+== devices ==
+devices: 2
+0 Intel(R) Arc(TM) Pro B70 Graphics 31.9 GiB
+1 Intel(R) Arc(TM) Pro B70 Graphics 31.9 GiB
+xpu.memory attrs: ['Any', 'Device', 'Literal', 'MemPool', 'XPUPluggableAllocator', '_XPUAllocator', '_augment_memory_snapshot_stack_traces', '_dummy_type', '_dump_snapshot', '_get_current_allocator', '_get_device_index', '_is_compiled', '_lazy_init', '_record_memory_history', '_recurse_add_to_result', '_snapshot', 'change_current_allocator', 'collections', 'contextlib', 'ctypes', 'empty_cache', 'get_per_process_memory_fraction', 'is_initialized', 'list_gpu_processes', 'max_memory_allocated', 'max_memory_reserved', 'mem_get_info', 'memory_allocated', 'memory_reserved', 'memory_snapshot', 'memory_stats', 'memory_stats_as_nested_dict', 'pickle', 'reset_accumulated_memory_stats', 'reset_peak_memory_stats', 'set_per_process_memory_fraction', 'sys', 'torch', 'use_mem_pool']
+== devices exit 0 ==
+== UR log env strings ==
+UR_LOG_
+UR_LOG_CH
+== UR loader env strings ==
+UR_ADAPTERS_DEEP_BIND
+UR_ADAPTERS_FORCE_LOAD
+UR_ADAPTERS_SEARCH_PATH
+-- probe baseline 8 GiB env: none
+PROBE baseline gib=8 GPUActive 0.00 -> 8.03 GiB (delta +8.02) MemAvail delta -7.93 GiB reserved 8.00 GiB
+-- probe sysman 8 GiB ZES_ENABLE_SYSMAN=1
+PROBE sysman gib=8 GPUActive 0.00 -> 8.02 GiB (delta +8.02) MemAvail delta -8.16 GiB reserved 8.00 GiB
+-- probe flat 8 GiB ZE_FLAT_DEVICE_HIERARCHY=flat
+PROBE flat gib=8 GPUActive 0.00 -> 8.07 GiB (delta +8.07) MemAvail delta -8.14 GiB reserved 8.00 GiB
+-- probe allocconf 8 GiB PYTORCH_XPU_ALLOC_CONF=backend:cudaMallocAsync
+PROBE allocconf gib=8 GPUActive 0.00 -> 8.07 GiB (delta +8.07) MemAvail delta -8.15 GiB reserved 8.00 GiB
+-- probe pool 8 GiB env: none
+PROBE pool gib=8 GPUActive 0.07 -> 8.07 GiB (delta +8.00) MemAvail delta -8.04 GiB reserved 8.00 GiB
+-- probe urlog 8 GiB UR_LOG_LEVEL_ZERO=debug (log -> $OUT/urlog.log)
+urlog exit 0
+PROBE urlog gib=8 GPUActive 0.00 -> 8.07 GiB (delta +8.07) MemAvail delta -8.13 GiB reserved 8.00 GiB
+urlog lines: 7
+-- probe baseline24 24 GiB env: none
+PROBE baseline24 gib=24 GPUActive 0.00 -> 24.07 GiB (delta +24.06) MemAvail delta -24.02 GiB reserved 24.00 GiB
+-- probe sysman24 24 GiB ZES_ENABLE_SYSMAN=1
+PROBE sysman24 gib=24 GPUActive 0.00 -> 24.07 GiB (delta +24.07) MemAvail delta -24.22 GiB reserved 24.00 GiB
+-- probe flat24 24 GiB ZE_FLAT_DEVICE_HIERARCHY=flat
+PROBE flat24 gib=24 GPUActive 0.00 -> 24.07 GiB (delta +24.07) MemAvail delta -24.21 GiB reserved 24.00 GiB
+MemAvailable:   60577792 kB
+GPUActive:           652 kB
+== end 20:56:11
