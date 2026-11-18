@@ -377,6 +377,64 @@ def attn_decode(q: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor, n
     return out
 
 
+# ---------------------------------------------------------------- QSA decode attention (S25)
+@triton.jit
+def _qsa_attn_decode_k(Q, K, V, IDX, O, NSEL, S, D, G, KSTRIDE, SCALE,
+                       BLOCK_N: tl.constexpr, BLOCK_D: tl.constexpr):
+    """One program per query head: GQA attention over a GATHERED cell set —
+    the keep-set of the lightning indexer for one decode token. IDX is int32
+    [NSEL] of cache cell ids, negative = padding slot (skipped). K/V caches
+    are cell-major [S, Hkv, D] (the QSA state layout), so a row lives at
+    `cell * KSTRIDE` with `KSTRIDE = Hkv * D`; q [Hq, D] already carries
+    SCALE, out [Hq, D] float32. The kept set is bounded by top_k + tail
+    (~2054 cells), so — unlike attn_decode — one kernel, no split/combine."""
+    hq = tl.program_id(0)
+    hk = hq // G
+    d = tl.arange(0, BLOCK_D)
+    dm = d < D
+    q = tl.load(Q + hq * D + d, mask=dm, other=0.0).to(tl.float32) * SCALE
+    m_i = tl.max(tl.full((BLOCK_N,), -float("inf"), tl.float32), 0)
+    l_i = tl.sum(tl.zeros((BLOCK_N,), dtype=tl.float32), 0)
+    acc = tl.zeros((BLOCK_D,), dtype=tl.float32)
+    kb = K + hk * D
+    vb = V + hk * D
+    for n0 in range(0, NSEL, BLOCK_N):
+        i = n0 + tl.arange(0, BLOCK_N)
+        im = i < NSEL
+        cell = tl.load(IDX + i, mask=im, other=-1)
+        valid = im & (cell >= 0)
+        c = tl.where(valid, cell, 0)
+        k = tl.load(kb + c[:, None] * KSTRIDE + d[None, :],
+                    mask=valid[:, None] & dm[None, :], other=0.0).to(tl.float32)
+        sc = tl.sum(k * q[None, :], axis=1)
+        sc = tl.where(valid, sc, -float("inf"))
+        m_new = tl.maximum(m_i, tl.max(sc, 0))
+        alpha = tl.exp(m_i - m_new)
+        p = tl.exp(sc - m_new)
+        v = tl.load(vb + c[:, None] * KSTRIDE + d[None, :],
+                    mask=valid[:, None] & dm[None, :], other=0.0).to(tl.float32)
+        acc = acc * alpha + tl.sum(p[:, None] * v, axis=0)
+        l_i = l_i * alpha + tl.sum(p, 0)
+        m_i = m_new
+    tl.store(O + hq * D + d, acc / l_i, mask=dm)
+
+
+def qsa_attn_decode(q: torch.Tensor, k_cache: torch.Tensor, v_cache: torch.Tensor,
+                    idx: torch.Tensor, scale: float, out: torch.Tensor | None = None) -> torch.Tensor:
+    """q [Hq, D]; cell-major caches [S, Hkv, D]; idx int32 [M] of cache cell
+    ids to attend (negative entries are padding and skipped); scale = 1/sqrt(D)
+    folded into q. Returns [Hq, D] float32 (S25 QSA decode)."""
+    Hq, D = q.shape
+    S, Hkv, _ = k_cache.shape
+    if idx.dtype != torch.int32:
+        idx = idx.to(torch.int32)
+    out = torch.empty(Hq, D, dtype=torch.float32, device=q.device) if out is None else out
+    _qsa_attn_decode_k[(Hq,)](q, k_cache, v_cache, idx, out, idx.shape[0],
+                              S, D, Hq // Hkv, Hkv * D, scale,
+                              BLOCK_N=64, BLOCK_D=_np2(D), num_warps=4)
+    return out
+
+
 # ---------------------------------------------------------------- self-test
 def _selftest():
     torch.manual_seed(0)
@@ -455,6 +513,21 @@ def _selftest():
         ref2 = (p2 @ vc[:, :n].float()) / (p2.sum(-1, keepdim=True) + (sk.view(Hkv, G, 1) - m2).exp())
         o2 = attn_decode(q, kc, vc, torch.tensor([n], device=dev, dtype=torch.int32), nsp, split, sinks=sk)
         print(f"attn_decode+sinks Hq={Hq} Hkv={Hkv} D={D} n={n}: {(o2 - ref2.reshape(Hq, D)).abs().max().item():.2e}")
+
+    for Hq, Hkv, D, S, M in [(4, 2, 32, 4096, 40), (24, 2, 256, 4096, 2054)]:
+        q = torch.randn(Hq, D, device=dev)
+        kc = torch.randn(S, Hkv, D, device=dev)
+        vc = torch.randn(S, Hkv, D, device=dev)
+        ids = torch.randperm(S - 1, device=dev)[:M // 2].sort().values
+        idx = torch.full((M,), -1, dtype=torch.int32, device=dev)
+        idx[: ids.shape[0]] = ids.to(torch.int32)
+        scale = D ** -0.5
+        o = qsa_attn_decode(q, kc, vc, idx, scale)
+        g = Hq // Hkv
+        sel = idx[idx >= 0].long()
+        ref = torch.stack([(kc[sel, h // g] * (q[h] * scale)).sum(1).softmax(0) @ vc[sel, h // g]
+                           for h in range(Hq)])
+        print(f"qsa_attn_decode Hq={Hq} Hkv={Hkv} D={D} M={M}: {(o - ref).abs().max().item():.2e}")
 
 
 if __name__ == "__main__":

@@ -317,14 +317,17 @@ class QSA:
         self.kq_scale = 1.0 / math.sqrt(head_dim)
         self.idx_scale = 1.0 / math.sqrt(idx_dim)
 
-    def zero_state(self) -> dict:
-        """Append-only caches: raw indexer keys + their cell positions, and
-        the normed/roped K/V cache (cells in sequence order)."""
-        e = lambda *shape: torch.zeros(0, *shape)  # noqa: E731  (the reference runs on CPU)
+    def zero_state(self, device=None) -> dict:
+        """Append-only caches: raw indexer keys + their cell positions, the
+        K/V cache (cells in sequence order) and, for `decode`, the pooled
+        indexer keys per block (`forward` recomputes those from the raw rows
+        each call and ignores/does not carry `pool`)."""
+        e = lambda *shape: torch.zeros(0, *shape, device=device)  # noqa: E731
         return {"idx_keys": e(self.idx_dim),
-                "idx_pos": torch.zeros(0, dtype=torch.int64),
+                "idx_pos": torch.zeros(0, dtype=torch.int64, device=device),
                 "kv_k": e(self.n_head_kv, self.head_dim),
-                "kv_v": e(self.n_head_kv, self.head_dim)}
+                "kv_v": e(self.n_head_kv, self.head_dim),
+                "pool": e(self.idx_dim)}
 
     def forward(self, cur: torch.Tensor, pos: torch.Tensor, state: dict):
         """cur [T, n_embd], pos [T] int64 absolute M-RoPE positions (all four
@@ -347,8 +350,8 @@ class QSA:
         k_raw = self.idx_k(cur)                                       # [T, 128]
         # the cache is an f16 buffer (SET_ROWS f16) that pooling gathers
         # back through, so the pooled keys see f16-rounded raw rows
-        idx_keys = torch.cat([state["idx_keys"], k_raw], 0).half().float()  # [N, 128]
-        idx_pos = torch.cat([state["idx_pos"], pos])                  # [N]
+        idx_keys = torch.cat([state["idx_keys"].to(dev), k_raw], 0).half().float()  # [N, 128]
+        idx_pos = torch.cat([state["idx_pos"].to(dev), pos])          # [N]
         N = idx_keys.shape[0]
         n_pool = (N + cp - 1) // cp
 
@@ -394,8 +397,8 @@ class QSA:
         k_roped = rope_neox(k_normed, cos_all[pos], sin_all[pos])
         v = self.wv(cur).view(T, self.n_head_kv, self.head_dim)
 
-        kv_k = torch.cat([state["kv_k"], k_roped], 0)
-        kv_v = torch.cat([state["kv_v"], v], 0)
+        kv_k = torch.cat([state["kv_k"].to(dev), k_roped], 0)
+        kv_v = torch.cat([state["kv_v"].to(dev), v], 0)
 
         # ---- masked GQA attention + gate (build_attn_qsa / 1069-1078)
         attn = self._attend(q_roped, kv_k, kv_v, sel)
@@ -427,6 +430,131 @@ class QSA:
         }
         new_state = {"idx_keys": idx_keys, "idx_pos": idx_pos,
                      "kv_k": kv_k, "kv_v": kv_v}
+        return out, new_state, parts
+
+    def decode(self, cur: torch.Tensor, pos: torch.Tensor, state: dict):
+        """One decode token (T=1) — the incremental twin of `forward` used on
+        GPU (plan S25 step 2: prefill with torch, decode with one kernel).
+        Same math, cheaper state:
+
+          * pooled keys are carried in `state["pool"]`; only the blocks this
+            token (re)touches are recomputed — INCLUDING the last PARTIAL
+            block, whose clamped gather (past-the-end members read cache
+            row 0) changes every step — never just the newly completed ones;
+          * the keep-set is materialized as a fixed-size cell-index list
+            (top-k block cells with padding -1, then the incomplete-tail
+            slots), no [T, N] bool;
+          * attention runs through kernels.qsa_attn_decode (gather by cell
+            id, online softmax). On CPU the identical keep-set goes through
+            `sel` + `_attend` instead, so the two paths test against each
+            other without a GPU.
+
+        Assumes `pos` is the newest position (>= every cached one), as any
+        decode step is: then the only block invisible to the token with
+        cells at-or-before it is the incomplete last block, and the tail
+        rule of `_keep_cells` reduces to exactly that block. Returns
+        (out [1, n_embd], new_state with `pool`, parts) — same parts keys as
+        `forward`, T=1.
+        """
+        dev = cur.device
+        pos = pos.to(device=dev, dtype=torch.int64).view(1)
+        cp = self.compress
+        old_n = state["idx_keys"].shape[0]
+
+        k_raw = self.idx_k(cur)                                       # [1, 128]
+        idx_keys = torch.cat([state["idx_keys"].to(dev), k_raw], 0).half().float()
+        idx_pos = torch.cat([state["idx_pos"].to(dev), pos])
+        N = idx_keys.shape[0]
+        n_pool = (N + cp - 1) // cp
+
+        pool = state.get("pool")
+        if pool is None or pool.device != dev or pool.shape[0] != (old_n + cp - 1) // cp:
+            pool, b0 = idx_keys.new_zeros((0, self.idx_dim)), 0
+        else:
+            b0 = min(old_n // cp, n_pool)   # rows >= floor(old_n/cp) saw their clamp change
+        rows = torch.arange(b0, n_pool, device=dev)
+        cells = rows[:, None] * cp + torch.arange(cp, device=dev)
+        cid = torch.where(cells < N, cells, torch.zeros_like(cells))  # GET_ROWS -> row 0
+        new_pool = grouped_norm(idx_keys[cid].sum(1) * (1.0 / cp), self.idx_k_norm, self.eps)
+        pool = torch.cat([pool[:b0], new_pool], 0)
+
+        cos_all, sin_all = rope_table(self.rope_n_rot, self.rope_base, None,
+                                      int(idx_pos.max().item()) + 1, dev)
+        q_idx = self.idx_q(cur).view(1, self.idx_heads, self.idx_dim)
+        q_idx = grouped_norm(q_idx, self.idx_q_norm, self.eps)
+        q_idx = rope_neox(q_idx, cos_all[pos], sin_all[pos])
+
+        pos_pad = torch.cat([idx_pos, idx_pos.new_full((n_pool * cp - N,), 1 << 60)])
+        vis = pos_pad[torch.arange(n_pool, device=dev) * cp + (cp - 1)] <= pos  # [n_pool]
+        score = q_idx.new_zeros(n_pool)
+        for h in range(self.idx_heads):
+            score = score + torch.relu(pool @ q_idx[0, h])
+        score = score * self.idx_scale
+        score = torch.where(vis, score, score.new_full((), float("-inf")))
+
+        k = min(n_pool, self.n_top_pool)
+        top = score.topk(k).indices                                    # [k] block ids
+        bcells = top[:, None] * cp + torch.arange(cp, device=dev)      # [k, cp] cells
+        ok = vis[top][:, None] & (bcells < N)
+        head = torch.where(ok, bcells, torch.full_like(bcells, -1)).reshape(-1)
+        tail = (n_pool - 1) * cp + torch.arange(cp, device=dev)
+        ok_tail = (tail < N) & (~vis[n_pool - 1]) \
+            & (idx_pos[torch.clamp(tail, max=N - 1)] <= pos)
+        idx = torch.cat([head, torch.where(ok_tail, tail, torch.full_like(tail, -1))]) \
+            .to(torch.int32)
+
+        # ---- Q / K / V (same as forward)
+        q_full = self.wq(cur)
+        qv = q_full.view(1, self.n_head, 2 * self.head_dim)
+        q_pre, gate = qv[..., :self.head_dim], qv[..., self.head_dim:]
+        q_normed = grouped_norm(q_pre, self.q_norm, self.eps)
+        q_roped = rope_neox(q_normed, cos_all[pos], sin_all[pos])
+        k_pre = self.wk(cur).view(1, self.n_head_kv, self.head_dim)
+        k_normed = grouped_norm(k_pre, self.k_norm, self.eps)
+        k_roped = rope_neox(k_normed, cos_all[pos], sin_all[pos])
+        v = self.wv(cur).view(1, self.n_head_kv, self.head_dim)
+        kv_k = torch.cat([state["kv_k"].to(dev), k_roped], 0)
+        kv_v = torch.cat([state["kv_v"].to(dev), v], 0)
+
+        if dev.type == "cpu":
+            sel = torch.full((N,), float("-inf"), device=dev)
+            sel[idx[idx >= 0].long()] = 0.0
+            attn = self._attend(q_roped, kv_k, kv_v, sel.unsqueeze(0))
+        else:
+            from pynference import kernels
+            attn = kernels.qsa_attn_decode(q_roped[0].contiguous(), kv_k, kv_v,
+                                           idx, self.kq_scale).unsqueeze(0)
+
+        attn_flat = attn.reshape(1, self.n_head * self.head_dim)
+        gate_sig = torch.sigmoid(gate.reshape(1, self.n_head * self.head_dim))
+        out = self.wo(attn_flat * gate_sig)
+
+        sel_parts = torch.full((1, N), float("-inf"), device=dev)
+        sel_parts[0, idx[idx >= 0].long()] = 0.0
+        parts = {
+            "indexer_k_raw": k_raw,
+            "indexer_pool_k_new": pool[b0:],
+            "indexer_k": pool,
+            "indexer_q": q_idx,
+            "indexer_score": score.view(1, -1),
+            "indexer_sel": sel_parts,
+            "kq_mask_qsa": sel_parts,
+            "Qcur_full": q_full,
+            "Qcur_reshaped": q_pre,
+            "Qcur_normed": q_normed,
+            "Qcur": q_roped,
+            "gate_reshaped": gate.reshape(1, self.n_head * self.head_dim),
+            "Kcur": k_pre.reshape(1, self.n_head_kv * self.head_dim),
+            "Kcur_normed": k_normed,
+            "Kcur_rope": k_roped,
+            "Vcur": v.reshape(1, self.n_head_kv * self.head_dim),
+            "attn_pregate": attn_flat,
+            "gate_sigmoid": gate_sig,
+            "attn_gated": attn_flat * gate_sig,
+            "attn_output": out,
+        }
+        new_state = {"idx_keys": idx_keys, "idx_pos": idx_pos,
+                     "kv_k": kv_k, "kv_v": kv_v, "pool": pool}
         return out, new_state, parts
 
     def _keep_cells(self, score: torch.Tensor, vis: torch.Tensor,

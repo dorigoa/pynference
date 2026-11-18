@@ -303,6 +303,54 @@ def test_qsa_synthetic_invariants():
     assert torch.isfinite(p["indexer_sel"][0]).all()  # both blocks visible -> all kept
 
 
+def test_qsa_decode_matches_forward():
+    """S25 step 2 (CPU half): the incremental `QSA.decode` — carried pooled-
+    key cache (incl. the partial block recomputed every step) and fixed-size
+    cell keep-set — must reproduce `forward` at T=1: identical keep-set
+    (indexer_sel 0/-inf pattern), pooled keys, scores, and outputs within
+    f32 tolerance. Small synthetic dims with idx_top_k=8 (2 blocks kept),
+    so past 8 cells the selection regime really drops blocks."""
+    torch.manual_seed(1)
+    C, HD, NH, NKV, ROT = 128, 64, 4, 2, 16
+    IH, ID, CP, TOPK = 2, 32, 4, 8
+    lw = lambda w: (lambda x: x @ w.T)  # noqa: E731
+    g = lambda *s: torch.randn(*s) * 0.05  # noqa: E731
+    qsa = QSA(lw(g(2 * HD * NH, C)), lw(g(HD * NKV, C)), lw(g(HD * NKV, C)),
+              lw(g(C, HD * NH)), torch.ones(HD) * 0.5, torch.ones(HD) * 0.5,
+              lw(g(IH * ID, C)), lw(g(ID, C)),
+              torch.ones(ID) * 0.5, torch.ones(ID) * 0.5,
+              n_head=NH, n_head_kv=NKV, head_dim=HD,
+              idx_heads=IH, idx_dim=ID, idx_top_k=TOPK, compress=CP,
+              rope_n_rot=ROT, rope_base=1e4, eps=EPS)
+
+    T0, T1 = 5, 21  # decode to N=21: 6 blocks, top-2 -> 8 kept cells + tail
+    cur = g(T0, C)
+    out_f, st_f, _ = qsa.forward(cur, torch.arange(T0), qsa.zero_state())
+    out_d, st_d, _ = qsa.forward(cur, torch.arange(T0), qsa.zero_state())
+    assert torch.equal(out_f, out_d)
+    assert "pool" not in st_f  # forward does not carry it; decode rebuilds
+
+    n = T0
+    for i in range(T0, T1):
+        step, pos = g(1, C), torch.tensor([i])
+        of, st_f, pf = qsa.forward(step, pos, st_f)
+        od, st_d, pd = qsa.decode(step, pos, st_d)
+        n += 1
+        assert pd["indexer_k"].shape == (n // CP if n % CP == 0 else n // CP + 1, ID)
+        assert torch.equal(torch.isfinite(pf["indexer_sel"]),
+                           torch.isfinite(pd["indexer_sel"])), f"keep-set differs at N={n}"
+        assert torch.allclose(pf["indexer_k"], pd["indexer_k"], atol=1e-6), f"pool at N={n}"
+        assert torch.allclose(pf["indexer_score"], pd["indexer_score"],
+                              atol=1e-6, rtol=1e-5), f"scores at N={n}"
+        assert torch.allclose(of, od, atol=1e-5, rtol=1e-4), f"out at N={n}"
+
+    # the selection regime really bit: at N=21 there are 6 blocks, only 5
+    # visible, top-2 keeps 8 cells, plus the 1 real cell of the incomplete
+    # tail block — far short of the 21 causal cells
+    kept = int(torch.isfinite(pd["indexer_sel"])[0].sum())
+    assert kept <= 2 * CP + (CP - 1) < n
+
+
 @needs_model
 def test_blk3_qsa_matches_dump():
     T = len(DUMP_TOKENS)
