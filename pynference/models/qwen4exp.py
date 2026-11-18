@@ -8,10 +8,10 @@ torch order [T, C]; GGML prints [C, T] with the flat stream index
 the math; constants live in tests/golden/qwen4exp/facts.json
 (metadata.qwen4exp.ple.*).
 
-This file currently holds the PLE (only blk.1 has it): the n-gram row hash
-computed host-side, the IQ4_NL embedding-table gather, and the gated
-key/value + dilated depthwise-conv block. The hyper-connection mixer
-(`hc_attn_*`/`hc_ffn_*`/`output_hc_*`) is added by S24 step 3.
+This file holds the PLE (only blk.1 has it): the n-gram row hash computed
+host-side, the IQ4_NL embedding-table gather, and the gated key/value +
+dilated depthwise-conv block; and the hyper-connection mixer and combine
+(`hc_attn_*`/`hc_ffn_*` per layer, `output_hc_*` at the exit head).
 """
 from __future__ import annotations
 
@@ -116,6 +116,65 @@ def ple_gather_embedding(g, name: str, idx: np.ndarray, *, device) -> torch.Tens
         return torch.from_numpy(ref_dequant(rows, info.type))
     qw = NativeQWeight(info.type, torch.from_numpy(rows).to(device), rows.shape[0], head_dim)
     return qw.rows_dequant(torch.arange(rows.shape[0], device=device))
+
+
+class HCMixer:
+    """The hyper-connection mixer (S23 map A `build_hc_mix`), run on the flat
+    `res_hc` [T, hc*n_embd] to produce the block input and its inject weights.
+
+    Weights per phase (`hc_attn_*`/`hc_ffn_*`, and `output_hc_*` at the exit
+    head with `inject=None`): `norm` torch [hc, n_embd] F32 — the GGUF
+    [hc*n_embd] viewed stream-major (flat index `e + n_embd*s`), multiplied
+    as-is (map A: the converter folded any (1+w) into the file); `down`/`up`
+    QWeights of the low-rank branch (down: n = rank 320, k = hc*n_embd;
+    up: n = hc*n_embd, k = rank); `inject` a QWeight n = hc, k = hc*n_embd.
+
+    Math (dump S23-1 blk.0 node graph): `xn = grouped_norm(res, norm, eps)`,
+    `lo = silu(xn_down / hc)`, `gate = lo @ up`, `mixed = mean_s(xn *
+    sigmoid(gate))` (the DSV4_HC_PRE op) is the block input, and
+    `inject = xn @ inject_w / hc` feeds `hc_combine`. The 1/hc SCALEs are
+    explicit ggml nodes (sums in the dump confirm the factor 4).
+    """
+
+    def __init__(self, norm, down, up, inject=None, *, eps: float):
+        self.norm, self.down, self.up, self.inject = norm, down, up, inject
+        self.hc, self.n_embd = norm.shape
+        self.channels = self.hc * self.n_embd
+        self.eps = eps
+
+    def forward(self, res_hc: torch.Tensor):
+        """-> (mixed [T, n_embd], inject [T, hc] | None, parts).
+
+        parts holds the cb()-dumped intermediates in torch layout:
+        hc_norm/hc_gate [T, hc*n_embd], hc_mixed [T, n_embd], hc_inject
+        [T, hc] (absent on the output-head mixer, which has no inject).
+        """
+        T = res_hc.shape[0]
+        xn = grouped_norm(res_hc.view(T, self.hc, self.n_embd), self.norm, self.eps)
+        xn_flat = xn.reshape(T, self.channels)
+        lo = silu(self.down(xn_flat) * (1.0 / self.hc))
+        gate = self.up(lo)
+        mixed = (xn * torch.sigmoid(gate.view(T, self.hc, self.n_embd))).mean(1)
+        parts = {"hc_norm": xn_flat, "hc_gate": gate, "hc_mixed": mixed}
+        if self.inject is None:
+            return mixed, None, parts
+        inj = self.inject(xn_flat) * (1.0 / self.hc)
+        parts["hc_inject"] = inj
+        return mixed, inj, parts
+
+
+def hc_combine(res_hc: torch.Tensor, block_out: torch.Tensor, inject: torch.Tensor) -> torch.Tensor:
+    """`res[s] += block_out * 2*sigmoid(inject[s])` (map A `build_hc_combine`,
+    DSV4_HC_POST; the 2*SCALE(SIGMOID(inject)) pair is explicit in the dump).
+
+    res_hc [T, hc*n_embd], block_out [T, n_embd], inject [T, hc] -> new
+    res_hc, same layout.
+    """
+    T, channels = res_hc.shape
+    hc = inject.shape[1]
+    w = 2.0 * torch.sigmoid(inject)
+    return (res_hc.view(T, hc, -1)
+            + block_out.unsqueeze(1) * w.unsqueeze(-1)).reshape(T, channels)
 
 
 class PLE:
