@@ -845,13 +845,13 @@ righe: solo con `grep`/`sed`; S23 ne fa la mappa).
 | Parametro | Valore |
 | --- | --- |
 | layer / hidden | 48 / 2560 |
-| attention | un layer ogni 4; 24 teste query, 2 KV, dimensione 256; RoPE 64 dimensioni, base 1e7, sezioni [11, 11, 10, 0] |
-| attention compressa | `attention.compress_ratios` (48 valori, 4 sui layer di attention compressa) |
+| attention | un layer ogni 4 (blk.3, 7, …, 47), tutti compressi: nessun layer di attention normale (S23); 24 teste query, 2 KV, dimensione 256; RoPE 64 dimensioni, base 1e7, sezioni [11, 11, 10, 0] |
+| attention compressa | `attention.compress_ratios` (48 valori, 4 su tutti i 12 layer di attention) |
 | indexer | 4 teste, chiave 128, top-k 2048 |
 | DeltaNet | come Qwen3.8-27B (conv 4, stato 128, 16 teste chiave, 48 valore, interno 6144) |
 | MoE | 512 esperti, top-10, FFN dell'esperto 640, esperto condiviso 640 con gate (`ffn_gate_inp_shexp`) |
 | hyper-connections | 4 flussi, rango basso 320 (`hc_attn_*`, `hc_ffn_*`, `output_hc_*`) |
-| embedding n-gram per layer (PLE) | `per_layer_token_embd` (160 per layer), n-gram 3, 8 teste per n-gram, conv 4, `ple_key`, `ple_value`, `ple_conv1d`, norme `ple_norm_*`; costanti di hash in `ple.layer_multipliers`, `ple.head_offsets`, `ple.head_vocab_sizes` |
+| embedding n-gram (PLE) | una tabella globale `per_layer_token_embd.weight` (160 × 320001536, IQ4_NL, 26,82 GiB), usata solo dal layer 1 (`ple.layers = [1]`, S23); n-gram 3, 8 teste per n-gram, conv 4, `ple_key`, `ple_value`, `ple_conv1d`, norme `ple_norm_*`; costanti di hash in `ple.layer_multipliers`, `ple.head_offsets`, `ple.head_vocab_sizes` |
 | tokenizer | `gpt2`, pre-tokenizer `qwen35` |
 | dimensioni | esperti instradati 56,24 GiB; resto 30,99 GiB (in gran parte la tabella PLE: S23 misura) |
 | tipi (GiB) | IQ4_NL 32,5; Q5_0 17,7; IQ3_XXS 16,8; IQ4_XS 14,4; Q6_K 2,2; IQ2_S 1,5; Q8_0 1,3; Q2_0 0,44; F32 0,29; BF16 0,04 |
@@ -1525,12 +1525,13 @@ riferimento su CPU e versione GPU, confrontati con i dump di llama.cpp.
 
 1. Piano dei moduli (nel report): tensori, forme per rank, cosa è
    replicato.
-2. PLE: hash degli n-gram, lookup dalla tabella in RAM pinned (righe
-   dequantizzate su CPU con `quant/ref.py` o su GPU dopo la copia),
-   convoluzione, chiavi e valori. Riferimento su CPU e GPU.
+2. PLE (solo il layer 1, S23): hash degli n-gram, lookup dalla tabella in
+   RAM pinned (righe dequantizzate su CPU con `quant/ref.py` o su GPU dopo
+   la copia), convoluzione, chiavi e valori. Riferimento su CPU e GPU.
 3. Hyper-connections (`hc_attn_*`, `hc_ffn_*`, `output_hc_*`). Riferimento su
    CPU e GPU.
-4. Job: moduli contro i dump di S23-1 per il layer 0.
+4. Job: moduli contro i dump di S23-1: hyper-connections sul layer 0, PLE
+   sul layer 1 (`ple_*-1`).
 
 **Fatto quando.** Moduli uguali ai dump (coseno ≥ 0,999).
 
@@ -1553,7 +1554,8 @@ prefill e decode, confrontata con i dump.
 1. Riferimento su CPU (indexer, selezione, compressione, attention).
 2. Versione GPU (prefill con torch, decode con un kernel).
 3. Job: contro i dump del primo layer compresso; contesti più corti e più
-   lunghi di top-k × rapporto.
+   lunghi di 2048 token (top-k 2048 = 512 blocchi da 4: fino a 2048 token
+   l'indexer tiene tutti i blocchi, oltre seleziona; `S23-map-b.md`).
 
 **Fatto quando.** Uguale ai dump; i due regimi di lunghezza provati.
 
@@ -1595,7 +1597,8 @@ PLE in RAM, che rispetta C8.
    (2.6).
 2. MoE: 512 esperti, top-10, esperto condiviso con gate; piano di memoria
    (budget degli esperti residenti) nel report, con l'esito del passo 1.
-3. Modello completo (DeltaNet di S20, attention normale e compressa, HC, PLE).
+3. Modello completo (DeltaNet di S20, attention compressa su tutti i 12
+   layer di attention, HC, PLE sul layer 1).
 4. Job **S26-2**: `compare_probs.py --ref`, `diff --strict`, `bench/ppl.py`.
 5. Correzioni fino a C8; `regress.sh qwen4exp` con baseline; chat con
    ragionamento; `regress.sh gemma4`.
