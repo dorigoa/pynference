@@ -1,0 +1,47 @@
+== start 10:55:07
+MemTotal:       63655308 kB
+MemAvailable:   60424304 kB
+GPUActive:           748 kB
+== compare_probs ours --ref (10:55:07)
+== ours exit 0 (10:58:05) (atteso 0)
+  store: expandable_segments on (no host-RAM mirror, S26)
+  store: expandable_segments on (no host-RAM mirror, S26)
+chat-it: 'The user is asking me to identify the current German/A/Z/E/Z/A/A/Z/A/Z/A/A/Z/A/A'
+chat-en: 'The user wants me to create a Z/Z (Z/A) Z/A (Z/A) Z/A (Z/A'
+code: '    return 0 if 0 == 0 else 0\n\ndef fibonacci2(a, z, x, x'
+raw: ' Augustus became the first Roman emperor, and his descendants continued to rule '
+floor MemAvailable 27.67 GiB, max GPUActive 24.05 GiB
+== diff --strict (10:58:05)
+== diff exit 1 (10:58:05) (atteso 0 = C8)
+chat-it  same greedy tokens 0/24, max |dp| top-10 0.7210, mean partial KL 3.50e+00
+   ref:  'We need answer user\'s request in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase'
+   ours: 'The user is asking me to identify the current German/A/Z/E/Z/A/A/Z/A/Z/A/A/Z/A/A'
+chat-en  same greedy tokens 0/24, max |dp| top-10 0.9011, mean partial KL 3.16e-01
+   ref:  'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+   ours: 'The user wants me to create a Z/Z (Z/A) Z/A (Z/A) Z/A (Z/A'
+code     same greedy tokens 1/24, max |dp| top-10 0.5177, mean partial KL 5.49e-01
+   ref:  '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+   ours: '    return 0 if 0 == 0 else 0\n\ndef fibonacci2(a, z, x, x'
+raw      same greedy tokens 0/24, max |dp| top-10 0.0770, mean partial KL -1.26e-01
+   ref:  ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+   ours: ' Augustus became the first Roman emperor, and his descendants continued to rule until 68 ZZ. The Z Z'
+C8 FAIL: chat-it: greedy diverges at step 0 but the reference gap is 0.551 >= 0.15 (not a near-tie)
+C8 FAIL: chat-it: mean partial KL 3.50e+00 > 0.01
+C8 FAIL: chat-en: greedy diverges at step 0 but the reference gap is 0.819 >= 0.15 (not a near-tie)
+C8 FAIL: chat-en: mean partial KL 3.16e-01 > 0.01
+C8 FAIL: code: greedy diverges at step 1 but the reference gap is 0.548 >= 0.15 (not a near-tie)
+C8 FAIL: code: mean partial KL 5.49e-01 > 0.01
+C8 FAIL: raw: greedy diverges at step 0 but the reference gap is 0.374 >= 0.15 (not a near-tie)
+C8 FAIL: greedy-identical prompts: 0/4, 3 required
+C8 strict: FAIL
+== ppl (10:58:05)
+== ppl exit 0 (11:02:56) (atteso 0)
+7637 tokens, 8 chunks of 512
+Final estimate: PPL = 3.0152 +/- 0.14875  (2040 scored tokens, 236.3s)
+ref ppl:
+1.50.119.972 I Final estimate: PPL = 1.0002 +/- 0.00008
+floor MemAvailable 25.95 GiB, max GPUActive 30.36 GiB
+== summary ours=0 diff=1 ppl=0 11:02:56
+MemAvailable:   60666256 kB
+GPUActive:           648 kB
+== end 11:02:56
