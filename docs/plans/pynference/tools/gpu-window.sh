@@ -19,7 +19,10 @@
 # Variabili:
 #   PYI_HOST (ubuntu), PYI_DIR (pynference, relativo alla home del PC)
 #   PYI_SETTINGS (~/.claude/strata.json): da qui l'URL del server (ANTHROPIC_BASE_URL)
-#   PYI_STRATA_START (~/Strata/run-unsloth-ud-iq4_xs-v31.sh, percorso sul PC)
+#   PYI_STRATA_START (~/Strata/run-unsloth-ud-iq4_xs-v31.sh, percorso sul PC,
+#     eseguito con bash; lo script chiama `strata launch ... --no-tui`)
+#   PYI_STRATA_STOP ("strata launch --stop", comando sul PC)
+#   (start e stop girano con ~/.local/bin nel PATH: lì c'è il comando strata)
 #   PYI_STRATA_PATTERN (regex di pgrep -f per i processi di Strata)
 #   PYI_STRATA_TIMEOUT (1800 s per tornare su), PYI_JOB_MAX_MIN (120)
 
@@ -29,8 +32,17 @@ HOST=${PYI_HOST:-ubuntu}
 RDIR=${PYI_DIR:-pynference}
 SETTINGS=${PYI_SETTINGS:-$HOME/.claude/strata.json}
 STRATA_START=${PYI_STRATA_START:-'$HOME/Strata/run-unsloth-ud-iq4_xs-v31.sh'}
+STRATA_STOP=${PYI_STRATA_STOP:-'strata launch --stop'}
+# PATH dei comandi di Strata sul PC (la shell di ssh non legge ~/.profile)
+RPATH='export PATH="$HOME/.local/bin:$PATH"'
+# Processi di Strata. Versione installata con `strata launch` (in
+# ~/.local/share/strata/components): il servizio (`python -m
+# strata_control.runtime`), il server (`python -m serve.server`), il motore
+# (`engine/VERSIONE/strata --serve`) e il comando `strata launch` mentre
+# prepara l'avvio. Versione vecchia: ~/Strata/Strata/sycl/serve/server_intel.py
+# e ~/Strata/engine/strata.
 # (le parentesi quadre evitano che pgrep/pkill trovino la shell remota che li esegue)
-STRATA_PATTERN=${PYI_STRATA_PATTERN:-'sycl/serve/server_inte[l][.]py|/Strata/engine/strat[a] --serve'}
+STRATA_PATTERN=${PYI_STRATA_PATTERN:-'components/control/[^ ]*/bin/python[^ ]* -m (strata_control[.]runtim[e]|serve[.]serve[r])|components/engine/[^ ]*/strat[a] --serve|strata[.]py launc[h]|sycl/serve/server_inte[l][.]py|/Strata/engine/strat[a] --serve'}
 STRATA_TIMEOUT=${PYI_STRATA_TIMEOUT:-1800}
 JOB_MAX_MIN=${PYI_JOB_MAX_MIN:-120}
 JOBS=docs/plans/pynference/jobs
@@ -61,11 +73,15 @@ gpu_users() {
 }
 
 strata_stop() {
-  local i
+  local i out rc
   if ! rsh "pgrep -f -- '$STRATA_PATTERN' >/dev/null"; then
     say "Strata non è attivo"
   else
-    say "fermo Strata"
+    say "fermo Strata ($STRATA_STOP)"
+    out=$(rsh "$RPATH; cd ~ && $STRATA_STOP" 2>&1); rc=$?
+    [ -z "$out" ] || say "$STRATA_STOP: $(printf '%s\n' "$out" | tail -n 1)"
+    [ "$rc" = 0 ] || say "$STRATA_STOP: exit $rc, provo con i segnali"
+    # Strata avviato con la versione vecchia: lo ferma il suo server
     rsh "pkill -TERM -f -- 'sycl/serve/server_inte[l][.]py'" || true
     for i in $(seq 45); do rsh "pgrep -f -- '$STRATA_PATTERN' >/dev/null" || break; sleep 2; done
     if rsh "pgrep -f -- '$STRATA_PATTERN' >/dev/null"; then
@@ -88,8 +104,15 @@ strata_stop() {
 
 # Altri processi sulle GPU oltre a Strata e al desktop: la finestra non parte.
 check_other_users() {
-  local others
-  others=$(gpu_users | grep -v -E '^[0-9]+ strata' || true)
+  local others spids pid name
+  # i processi di Strata non sono "altri", anche se xpu-smi non li chiama strata
+  spids=" $(rsh "pgrep -f -- '$STRATA_PATTERN'" 2>/dev/null | tr '\n' ' ') "
+  # (niente case dentro $(...): la bash 3.2 del Mac non lo legge)
+  others=$(gpu_users | while read -r pid name; do
+    [ "${name#strata}" != "$name" ] && continue
+    [ "${spids#* $pid }" != "$spids" ] && continue
+    echo "$pid $name"
+  done)
   [ -z "$others" ] || die 4 "le GPU sono usate da altri processi (non li tocco): $(echo $others)"
 }
 
@@ -102,7 +125,8 @@ strata_start() {
     # Solo setsid va in background, con tutti i file descriptor sul log: con
     # "a && b && c &" bash mette in background tutta la lista in una subshell che
     # tiene aperto l'output di ssh finché Strata gira, e ssh non torna più.
-    rsh "mkdir -p ~/.cache && cd ~ && (setsid nohup $STRATA_START < /dev/null > ~/.cache/pynference-strata.log 2>&1 &)" \
+    # bash: lo script può non essere eseguibile; RPATH: lo script chiama strata
+    rsh "mkdir -p ~/.cache && cd ~ && $RPATH && (setsid nohup bash $STRATA_START < /dev/null > ~/.cache/pynference-strata.log 2>&1 &)" \
       || die 3 "avvio di Strata non riuscito"
   else
     say "Strata si sta caricando"

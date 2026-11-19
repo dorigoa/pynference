@@ -121,11 +121,13 @@ golden e delle finestre GPU.
 2. Sul PC deve esistere il venv (`scripts/remote.sh scripts/setup_env.sh`,
    già fatto in S1).
 3. Strata: lo script lo avvia, quando serve, con
-   `~/Strata/run-unsloth-ud-iq4_xs-v31.sh` sul PC (il modello di
-   `strata.json`). Se usi un altro script, esporta
-   `PYI_STRATA_START='$HOME/Strata/altro-script.sh'` prima di lanciare
-   `run-sections.sh`. Il log di Strata avviato dallo script è in
-   `~/.cache/pynference-strata.log` sul PC.
+   `bash ~/Strata/run-unsloth-ud-iq4_xs-v31.sh` sul PC (il modello di
+   `strata.json`; lo script chiama `strata launch ... --no-tui`) e lo ferma
+   con `strata launch --stop`, con `~/.local/bin` nel PATH. Se usi un altro
+   script, esporta `PYI_STRATA_START='$HOME/Strata/altro-script.sh'` prima
+   di lanciare `run-sections.sh` (per lo stop: `PYI_STRATA_STOP`). Il log
+   di Strata avviato dallo script è in `~/.cache/pynference-strata.log` sul
+   PC.
 4. Sul PC non devono esserci altri processi sulle GPU oltre a Strata e al
    desktop (per esempio un `llama-server` tuo): una finestra GPU li trova e
    si ferma senza toccarli.
