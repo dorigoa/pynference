@@ -505,7 +505,7 @@ nomina.
 
 | Cosa | Valore |
 | --- | --- |
-| PC | Ryzen 9 5950X (16 core, SMT spento, AVX2), 107 GB DDR4-2133 (XMP non parte), MSI MEG X570 ACE, Ubuntu 26.10, kernel 7.3 |
+| PC | Ryzen 9 5950X (16 core, SMT spento, AVX2), RAM DDR4: `MemTotal` 121,5 GiB dal 2026-11-19 (63,7 GiB nei job di S26; 107 GB all'inizio del piano), MSI MEG X570 ACE, Ubuntu 26.10, kernel 7.3 |
 | GPU | 2× Intel Arc Pro B70 (BMG-G31, 31,89 GiB, 256 EU), PCIe 4.0 x8 ciascuna, collegate solo attraverso l'host |
 | Disco | `/nvme`, 1,8 TB (1,3 TB liberi a novembre 2026) |
 | Software | Python 3.13.13 (venv `~/pynference/.venv`), torch 2.15.0+xpu, triton-xpu 3.9.0, oneCCL 2022.1.2 (backend `xccl`), Level Zero 1.32, compute-runtime 26.27 |
@@ -1609,9 +1609,11 @@ PLE in RAM, che rispetta C8.
 
 **Obiettivo.** Decode di Flash-Next vicino a C9.
 
-**Requisiti.** Job GPU: 2–3.
+**Requisiti.** Job GPU: 3–4.
 
-**Leggi.** C5, C9; le API di `qwen4exp.py`, `moe.py`, `kernels.py`.
+**Leggi.** C5, C9; in `reports/S26.md` i "Valori" e le note per S27; le API
+di `qwen4exp.py`, `qwen35.py` (`QLinear`), `quant/kernels.py`, `moe.py`,
+`kernels.py`.
 
 **Puoi modificare.** `pynference/models/qwen4exp.py`, `pynference/moe.py`,
 `pynference/kernels.py`, `pynference/quant/**`, `pynference/deltanet.py`,
@@ -1619,9 +1621,23 @@ PLE in RAM, che rispetta C8.
 
 **Passi.**
 
-1. Profilo di partenza (job): tempo per componente, hit degli esperti.
-2. Grafo a segmenti, kernel fusi, prefetch degli esperti dove utile.
-3. Job finale: velocità, `regress.sh qwen4exp`, `regress.sh gemma4`.
+1. Profilo di partenza (job): tempo per componente, hit degli esperti,
+   memoria per GPU e `MemAvailable` dell'host.
+2. Pesi densi quantizzati. In S26 `qwen4exp.py` decomprime in f32 tutti i
+   pesi che non sono esperti: 11,2 GB per GPU (S26-12), contro circa
+   2–2,5 GB nel loro tipo. Tienili quantizzati con le GEMV esistenti
+   (`QLinear` per Q8_0, come in `qwen35.py`; `quant.kernels.gemv_native`
+   per gli altri tipi, per esempio Q6_K) e dai la VRAM liberata agli esperti residenti
+   (in S26-12 erano 10,1 GB per GPU, circa un terzo degli esperti). Il
+   criterio resta C8 contro llama.cpp.
+3. Budget degli esperti con la RAM nuova. Dal 2026-11-19 il PC ha 121,5 GiB
+   di RAM (S26 ne aveva 63,7). Ricalcola misurando i limiti di
+   `_expert_budget` (`EXPERT_HOST_RESERVE_BYTES`,
+   `EXPERT_GPU_OVERHEAD_BYTES`, cap dell'host) e tieni in RAM gli esperti
+   non residenti (pinned dove conviene), così un miss non legge dal disco.
+4. Grafo a segmenti, kernel fusi, prefetch degli esperti dove utile.
+5. Job finale: velocità, `regress.sh qwen4exp`, `regress.sh gemma4`; anche
+   `regress.sh gpt-oss-120b` se è cambiato `moe.py`.
 
 **Fatto quando.** Misure nel report; regressioni verdi.
 
