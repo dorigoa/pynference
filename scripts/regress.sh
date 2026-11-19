@@ -2,7 +2,7 @@
 # C10 regression: rerun the S6 checks and compare against the golden baseline.
 # Non-Gemma models rebind the GGUF-aware tokenizer factory at runtime (S17).
 # Run only inside a GPU job (2.4). Prints PASS or FAIL, exits 0 or 1.
-#   usage: scripts/regress.sh gemma4|gpt-oss-120b|qwen35-27b
+#   usage: scripts/regress.sh gemma4|gpt-oss-120b|qwen35-27b|qwen4exp
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
@@ -13,7 +13,9 @@ case "${1:-}" in
                 G=tests/golden/gpt-oss-120b; DECODE=fused ;;   # graph decode is S18
   qwen35-27b) MODEL=/nvme/gguf/Qwen3.8-27B-Q8_0.gguf
               G=tests/golden/qwen35-27b; DECODE=fused ;;       # use_graph=False (C3, S21)
-  *) echo "usage: scripts/regress.sh gemma4|gpt-oss-120b|qwen35-27b"; exit 2 ;;
+  qwen4exp) MODEL=/nvme/Strata-data/models/unsloth-UD-IQ4_XS-v31/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00004.gguf
+            G=tests/golden/qwen4exp; DECODE=graph ;;           # flag inerte: percorso eager unico (S26, grafi a S27)
+  *) echo "usage: scripts/regress.sh gemma4|gpt-oss-120b|qwen35-27b|qwen4exp"; exit 2 ;;
 esac
 if [ ! -f "$MODEL" ] || [ ! -f "$G/ours_baseline.json" ] || [ ! -f "$G/ours_ppl.txt" ]; then
   echo "FAIL: missing model or golden files"; exit 1

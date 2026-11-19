@@ -40,7 +40,7 @@ from pynference.quant.ref import ref_dequant
 from pynference.quant.types import TYPES
 from pynference.quant.weight import F32QWeight, NativeQWeight, make_qweight
 from .gptoss import D8_BUDGET_GB, read_mem_total_bytes
-from .qwen35 import head_parity_rows, qkv_parity_runs, split_run
+from .qwen35 import qkv_parity_runs, split_run
 
 
 def silu(x: torch.Tensor) -> torch.Tensor:
@@ -714,11 +714,14 @@ class Qwen4Exp:
     [T, hc*n_embd], and the exit is the `output_hc` mixer (it replaces the
     final norm, so there is no output_norm tensor and no inject at the exit).
 
-    TP (world=2, oneCCL): attention heads split by PARITY — QSA q-head h
-    pairs with kv-head h % n_head_kv (modular GQA), so rank r must hold all
-    q-heads of parity r together with the kv-head of parity r, exactly the
-    qwen35 recipe (head_parity_rows / qkv_parity_runs, whose in-rank key map
-    h % n_key_l reproduces the global h % n_key rule). Embedding and lm_head
+    TP (world=2, oneCCL): DeltaNet heads split by PARITY (qkv_parity_runs,
+    whose in-rank key map h % n_key_l reproduces the global h % n_key rule —
+    dump-verified in TP2, l_last-0). QSA heads split CONTIGUOUSLY: its GQA
+    pairing is contiguous grouping (q-head h -> kv-head h // rep, dump +
+    tests/cpu/test_s26_pairing.py verified), so rank r owns q-heads
+    [r*n_head_l, (r+1)*n_head_l) = kv-head r's whole group + kv-head r;
+    parity would scatter a kv group across ranks (S26-11 attn_output-3).
+    Embedding and lm_head
     split the vocab by rows; the HC mixers, indexer, PLE and the ssm
     norm/conv metadata are replicated. all_reduce after every output
     projection; all_gather only on the logits.
@@ -909,15 +912,29 @@ class Qwen4Exp:
             L.out = self._wq(p + "ssm_out.weight", cols=value_runs)
             L.ssm_norm = self._f32(p + "ssm_norm.weight")
         else:
+            # GQA pairing is CONTIGUOUS GROUPING (q-head h -> kv-head
+            # h // (n_head/n_head_kv)): torch's SDPA enable_gqa does
+            # repeat_interleave and the S23-1 dump matches it — verified by
+            # tests/cpu/test_s26_pairing.py + the S25 TP1 attn comparisons
+            # (a modular mapping would mis-feed half the heads, no cos
+            # 0.9989). So heads split CONTIGUOUSLY, not by parity: rank r
+            # owns q-heads [r*n_head_l, (r+1)*n_head_l) — exactly the q
+            # block of kv-head r's group — and kv-head r. A parity split
+            # scatters each kv group over the ranks while each rank keeps
+            # only kv-head r, which is S26-11's attn_output-3 divergence
+            # (cos 0.43-0.49 on the rank-local attn_pregate, cpu2-repro).
+            def _head_rows(n_heads, dim):
+                a, l = split_run(n_heads * dim, w, r)
+                return [[a, l]]
             L.qsa = QSA(
                 self._wq(p + "attn_q.weight",
-                         runs=head_parity_rows(self.n_head, 2 * self.head_dim, w, r)),
+                         runs=_head_rows(self.n_head, 2 * self.head_dim)),
                 self._wq(p + "attn_k.weight",
-                         runs=head_parity_rows(self.n_head_kv, self.head_dim, w, r)),
+                         runs=_head_rows(self.n_head_kv, self.head_dim)),
                 self._wq(p + "attn_v.weight",
-                         runs=head_parity_rows(self.n_head_kv, self.head_dim, w, r)),
+                         runs=_head_rows(self.n_head_kv, self.head_dim)),
                 self._wq(p + "attn_output.weight",
-                         cols=head_parity_rows(self.n_head, self.head_dim, w, r)),
+                         cols=_head_rows(self.n_head, self.head_dim)),
                 self._f32(p + "attn_q_norm.weight"),
                 self._f32(p + "attn_k_norm.weight"),
                 self._wq(p + "indexer.q_proj.weight"),    # BF16 -> f32 here
