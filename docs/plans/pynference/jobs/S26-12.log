@@ -1,0 +1,88 @@
+== start 15:54:01
+MemTotal:       63655308 kB
+MemAvailable:   60731940 kB
+GPUActive:           652 kB
+== node replay xpu (15:54:01)
+== nodes exit 0 (15:55:32) (atteso 0)
+PROBE prefill: finite=248320/248320 top5=[(11751, 0.452), (271, 0.0648), (198, 0.0546), (264, 0.0302), (1076, 0.0178)]
+PROBE decode: finite=248320/248320 top5=[(11751, 0.2502), (271, 0.1435), (264, 0.0865), (198, 0.0604), (1076, 0.024)]
+SDPA_PROBE r1 shape=(12q,1kv) cos=1.000000 maxabs=0.000e+00
+SDPA_PROBE r0 shape=(12q,1kv) cos=1.000000 maxabs=0.000e+00
+compared 19 nodes; FIRST_DIVERGING: none
+OK=19 SKIP=26
+floor MemAvailable 28.83 GiB, max GPUActive 23.69 GiB
+== pytest gpu exit 0 (15:59:29)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+144 passed, 1 skipped, 1 warning in 236.34s (0:03:56)
+== ours exit 0 (16:02:39)
+  qwen4exp: load done in 63.0s
+  qwen4exp: load done in 63.0s
+chat-it: 'We need answer user\'s request in Italian: "Qual è la capitale d\'Italia? Rispondi'
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman emperor, marking the '
+== diff strict exit 0 (16:02:40) (atteso 0)
+chat-it  same greedy tokens 24/24, max |dp| top-10 0.0743, mean partial KL 2.13e-03
+   ref:  'We need answer user\'s request in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase'
+   ours: 'We need answer user\'s request in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase'
+chat-en  same greedy tokens 24/24, max |dp| top-10 0.1033, mean partial KL 3.21e-03
+   ref:  'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+   ours: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+code     same greedy tokens 24/24, max |dp| top-10 0.0474, mean partial KL 1.22e-03
+   ref:  '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+   ours: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+raw      same greedy tokens 24/24, max |dp| top-10 0.0303, mean partial KL 2.31e-03
+   ref:  ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+   ours: ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+C8 strict: PASS
+== ppl exit 0 (16:14:59) (atteso 0)
+Final estimate: PPL = 1.0002 +/- 0.00010  (2040 scored tokens, 555.5s)
+RES ppl ours 1.0002 ref 1.0002 rel 0.000% (limit 1%)
+== ppl compare exit 0 (16:14:59)
+== regress qwen4exp exit 0 (16:21:48)
+Final estimate: PPL = 1.0002 +/- 0.00010  (2040 scored tokens, 206.7s)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 0.00e+00 over top-10
+ppl: baseline 1.0002, now 1.0002, rel diff 0.000%
+PASS
+PASS
+== chat reasoning exit 0 (16:24:02)
+  store: layer 47 gate: 81 resident + 2 swap slots -> 72 MB
+  store: layer 47 gate: 81 resident + 2 swap slots -> 72 MB
+  store: layer 47 up: 81 resident + 2 swap slots -> 72 MB
+  store: layer 47 up: 81 resident + 2 swap slots -> 72 MB
+  store: layer 47 down: 81 resident + 2 swap slots -> 93 MB
+  store: layer 47 down: 81 resident + 2 swap slots -> 93 MB
+  dev_bytes = torch.from_numpy(np.ascontiguousarray(raw)).to(device)
+  dev_bytes = torch.from_numpy(np.ascontiguousarray(raw)).to(device)
+    3903 of 12288 local experts resident, 96 swap slots, store 9.82 GB, pinned 0.00 GB
+  qwen4exp: load done in 41.0s
+[pynference] loaded in 41.0s + warm-up 31.2s
+[reasoning]
+We need answer user's request in Italian: "Quanto fa 2 + 2? Rispondi in una frase." Need final one sentence. Simple: 2 + 2 fa 4. Ensure one sentence.
+
+
+
+2 + 2 fa 4.
+[stats] prompt new 68/68 tok, 57 tok in 37.46s = 1.5 tok/s
+[reasoning]
+We need answer user's request: "What is the capital of France? Answer in one sentence." Need final one sentence. Simple.
+
+
+
+The capital of France is Paris.
+[stats] prompt new 151/151 tok, 37 tok in 18.70s = 2.0 tok/s
+== regress gemma4 exit 0 (16:26:25)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 20.4s)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== summary: nodes=0 pytest=0 ours=0 diff=0 ppl=0 pplcmp=0 boot=0 regressqwen4exp=0 chatreason=0 regressgemma=0
+== end 16:26:25
