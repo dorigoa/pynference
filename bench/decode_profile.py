@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pynference.gguf import GGUFFile  # noqa: E402
 from pynference.models import load_model  # noqa: E402
 from pynference.parallel import TP  # noqa: E402
-from pynference.tokenizer import Tokenizer  # noqa: E402
+from pynference.tokenizer import load_tokenizer  # noqa: E402
 
 
 def main():
@@ -32,8 +32,20 @@ def main():
     args = ap.parse_args()
     tp = TP()
     g = GGUFFile(args.model)
-    tok = Tokenizer(g)
+    tok = load_tokenizer(g)
     model = load_model(g, tp, max_ctx=args.ctx)
+
+    def memline(tag):
+        """Per-rank device memory summary (S27: profile wants per-GPU bytes)."""
+        rep = getattr(model, "memory_report", lambda: {})()
+        parts = " ".join(f"{k}={v / 2**30:.2f}G" for k, v in rep.items())
+        alloc = res = -1
+        if torch.device(tp.device).type == "xpu":
+            mi = torch.xpu.memory_info(dev)
+            alloc, res = mi["allocated"], mi["reserved"]
+        print(f"[r{tp.rank}] mem {tag}: {parts} "
+              f"torch_alloc={alloc / 2**30:.2f}G torch_res={res / 2**30:.2f}G",
+              flush=True)
     model.fast_decode = args.mode != "torch"
     model.use_graph = args.mode == "graph"
     ids = tok.encode("The quick brown fox jumps over the lazy dog. " * 4)
@@ -42,6 +54,7 @@ def main():
             ids += tok.encode("The quick brown fox jumps over the lazy dog. ")
         ids = ids[:args.prompt_tokens]
     dev = tp.device
+    memline("loaded")
 
     def run(n):
         model.reset()
@@ -60,6 +73,7 @@ def main():
 
     run(4)                       # compile / autotune / capture
     pre, wall = run(args.steps)
+    memline("post-decode")
     if tp.is_main:
         print(f"\n[{args.mode}] prefill {len(ids)} tokens: {pre * 1e3:.3f} ms/token ({1 / pre:.0f} token/s)", flush=True)
         print(f"[{args.mode}] wall time per token: {wall * 1e3:.1f} ms ({1 / wall:.2f} tok/s)", flush=True)
