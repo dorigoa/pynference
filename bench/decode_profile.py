@@ -41,8 +41,8 @@ def main():
         parts = " ".join(f"{k}={v / 2**30:.2f}G" for k, v in rep.items())
         alloc = res = -1
         if torch.device(tp.device).type == "xpu":
-            mi = torch.xpu.memory_info(dev)
-            alloc, res = mi["allocated"], mi["reserved"]
+            alloc = torch.xpu.memory_allocated(dev)
+            res = torch.xpu.memory_reserved(dev)
         print(f"[r{tp.rank}] mem {tag}: {parts} "
               f"torch_alloc={alloc / 2**30:.2f}G torch_res={res / 2**30:.2f}G",
               flush=True)

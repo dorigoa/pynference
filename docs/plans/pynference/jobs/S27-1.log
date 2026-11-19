@@ -1,0 +1,26 @@
+== start 17:47:47
+== fused60 exit 1 (17:48:11)
+  store: expandable_segments on (no host-RAM mirror, S26)
+  store: layer 0 gate: 82 resident + 2 swap slots -> 53 MB
+  store: expandable_segments on (no host-RAM mirror, S26)
+  store: layer 0 gate: 82 resident + 2 swap slots -> 53 MB
+  store: layer 0 up: 82 resident + 2 swap slots -> 53 MB
+  store: layer 0 up: 82 resident + 2 swap slots -> 53 MB
+  store: layer 0 down: 82 resident + 2 swap slots -> 95 MB
+  store: layer 0 down: 82 resident + 2 swap slots -> 95 MB
+  store: layer 1 gate: 82 resident + 2 swap slots -> 53 MB
+  store: layer 1 gate: 82 resident + 2 swap slots -> 53 MB
+  store: layer 1 up: 82 resident + 2 swap slots -> 53 MB
+  store: layer 1 up: 82 resident + 2 swap slots -> 53 MB
+0
+floor MemAvailable 92.64 GiB, max GPUActive 20.70 GiB
+== fused2000 exit 1 (17:48:32)
+  store: expandable_segments on (no host-RAM mirror, S26)
+  store: layer 0 gate: 82 resident + 2 swap slots -> 53 MB
+  store: expandable_segments on (no host-RAM mirror, S26)
+  store: layer 0 gate: 82 resident + 2 swap slots -> 53 MB
+  store: layer 0 up: 82 resident + 2 swap slots -> 53 MB
+  store: layer 0 up: 82 resident + 2 swap slots -> 53 MB
+floor MemAvailable 92.35 GiB, max GPUActive 20.69 GiB
+== summary: fused60=1 fused2000=1
+== end 17:48:32
