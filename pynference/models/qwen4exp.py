@@ -15,17 +15,32 @@ dilated depthwise-conv block; the hyper-connection mixer and combine
 QSA block (plan S25: every 4th layer, `blk.3` first) — the lightning indexer
 with 4:1 key pooling, the top-k cell selection and the gated GQA attention
 it masks.
+
+S26 adds the full model class (`Qwen4Exp`, plan S26 step 3): every dense
+weight (any qtype) is dequantized to FP32 at load time into F32QWeight on
+BOTH paths — prefill and decode then share one matmul, which is the safest
+way to keep C8 (prefill==decode bitwise) across six different qtypes. The
+MoE experts stay natively quantized in the ExpertStore (S26-1..S26-6);
+the DeltaNet driver is the pure-torch chain verified against the dump in
+tests/cpu/test_qwen4exp_chain.py (no Triton kernels from deltanet.py).
 """
 from __future__ import annotations
 
+import gc
 import math
+import os
+import time
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from pynference.models.gemma4 import rope_neox, rope_table
 from pynference.quant.ref import ref_dequant
-from pynference.quant.weight import NativeQWeight, make_qweight
+from pynference.quant.types import TYPES
+from pynference.quant.weight import F32QWeight, NativeQWeight, make_qweight
+from .gptoss import D8_BUDGET_GB, read_mem_total_bytes
+from .qwen35 import head_parity_rows, qkv_parity_runs, split_run
 
 
 def silu(x: torch.Tensor) -> torch.Tensor:
@@ -679,3 +694,467 @@ def moe_layer(g, store, il: int, device):
                router_w=moe_router(g, il).to(device),
                activation="swiglu", routing="softmax",
                shared=shared[:3], shared_gate=shared[3])
+
+
+# ------------------------------------------------------------- full model (S26)
+
+PLE_TABLE = "per_layer_token_embd.weight"   # gather-only, never loaded whole
+
+
+class _Q4Layer:
+    """Per-block weight namespace: mixers always, then kind-specific block."""
+
+
+class Qwen4Exp:
+    """Qwen3.8-Flash-Next (48 layers): DeltaNet/QSA hybrid attention under
+    hyper-connections, PLE on blk.1, 512-expert MoE FFN (C5).
+
+    Layout follows the dump-verified chain tests (S24/S25): blocks take the
+    HC mixer's `mixed` directly (no extra pre-norm), residual streams are
+    [T, hc*n_embd], and the exit is the `output_hc` mixer (it replaces the
+    final norm, so there is no output_norm tensor and no inject at the exit).
+
+    TP (world=2, oneCCL): attention heads split by PARITY — QSA q-head h
+    pairs with kv-head h % n_head_kv (modular GQA), so rank r must hold all
+    q-heads of parity r together with the kv-head of parity r, exactly the
+    qwen35 recipe (head_parity_rows / qkv_parity_runs, whose in-rank key map
+    h % n_key_l reproduces the global h % n_key rule). Embedding and lm_head
+    split the vocab by rows; the HC mixers, indexer, PLE and the ssm
+    norm/conv metadata are replicated. all_reduce after every output
+    projection; all_gather only on the logits.
+
+    Dense weights are all f32 (docstring header); experts stream from the
+    ExpertStore with the gpt-oss budget ladder (C5/C8): prefill==decode
+    bitwise because both use the same F32QWeight matmul for the dense stack
+    and the same indexed GEMV for experts.
+    """
+
+    # C5 floors, same rationale comments as models/gptoss.py (S17/S26):
+    # oneCCL + graph scratch live above the store; the host reserve keeps
+    # page-cache-free RAM for the OS because the store's pinned ring is
+    # non-reclaimable.
+    EXPERT_BUDGET_MIN_GB = 8.0
+    EXPERT_GPU_OVERHEAD_BYTES = 11 << 30
+    EXPERT_HOST_RESERVE_BYTES = 16 << 30
+
+    def __init__(self, g, tp, max_ctx: int = 8192):
+        self.g, self.tp, self.max_ctx = g, tp, int(max_ctx)
+        get, dev, w, r = g.get, tp.device, tp.world, tp.rank
+        if not os.environ.get("PYI_NONDETERMINISTIC"):
+            torch.backends.mkldnn.deterministic = True   # same C8 rationale as qwen35
+        self.n_layer = int(get("block_count"))
+        cap = int(os.environ.get("PYI_QWEN4EXP_LAYERS", "0") or 0)
+        if cap:
+            self.n_layer = min(self.n_layer, cap)
+        self.n_embd = int(get("embedding_length"))
+        self.n_head = int(get("attention.head_count"))
+        self.n_head_kv = int(get("attention.head_count_kv"))
+        self.head_dim = int(get("attention.key_length"))
+        self.eps = float(get("attention.layer_norm_rms_epsilon", 1e-6))
+        self.compress = [int(x) for x in get("attention.compress_ratios")]
+        self.idx_heads = int(get("attention.indexer.head_count"))
+        self.idx_dim = int(get("attention.indexer.key_length"))
+        self.idx_top_k = int(get("attention.indexer.top_k"))
+        self.n_key = int(get("ssm.group_count"))
+        self.n_value = int(get("ssm.time_step_rank"))
+        self.ssm = int(get("ssm.state_size"))
+        self.conv_k = int(get("ssm.conv_kernel"))
+        assert int(get("ssm.inner_size")) == self.n_value * self.ssm
+        self.hc_n = int(get("hyper_connection.count"))
+        self.hc_rank = int(get("hyper_connection.low_rank"))
+        self.hc_dim = self.hc_n * self.n_embd
+        self.ple_dim = int(get("embedding_length_per_layer_input"))
+        self.rope_dim = int(get("rope.dimension_count", self.head_dim))
+        self.rope_base = float(get("rope.freq_base", 1e7))
+        self.n_vocab = int(g.tensors["token_embd.weight"].shape[1])
+        ple_layers = [int(x) for x in get("ple.layers", [1])]
+        if len(ple_layers) != 1:
+            raise NotImplementedError("PLE on several layers not supported")
+        self.ple_layer = ple_layers[0]
+        self.ple_cfg = dict(
+            ngram=int(get("ple.ngram_size")),
+            heads_per_ngram=int(get("ple.heads_per_ngram")),
+            multipliers=[int(x) for x in get("ple.layer_multipliers")],
+            head_offsets=[int(x) for x in get("ple.head_offsets")],
+            head_vocab_sizes=[int(x) for x in get("ple.head_vocab_sizes")],
+            eos_token_id=int(get("ple.eos_token_id")),
+        )
+        for name, v in (("attention.head_count", self.n_head),
+                        ("attention.head_count_kv", self.n_head_kv),
+                        ("ssm.group_count", self.n_key),
+                        ("ssm.time_step_rank", self.n_value),
+                        ("vocab", self.n_vocab)):
+            if v % w:
+                raise ValueError(f"{name} ({v}) not divisible by {w} GPUs")
+        self.n_head_l, self.n_head_kv_l = self.n_head // w, self.n_head_kv // w
+        self.n_key_l, self.n_value_l = self.n_key // w, self.n_value // w
+        self._qkv_l = (2 * self.n_key_l + self.n_value_l) * self.ssm
+        # The engine may toggle these; this model has a single eager decode
+        # path (T == 1 goes through QSA.decode), so they are accepted but do
+        # not select different code (correctness first, graphs are S27).
+        self.fast_decode, self.use_graph = True, False
+        self._dense_bytes = 0
+        t0 = time.time()
+        self.v0, vn = split_run(self.n_vocab, w, r)
+        self.v1 = self.v0 + vn
+        self.embed = self._wq("token_embd.weight", runs=[(self.v0, vn)])
+        self.lm_head = (self._wq("output.weight", runs=[(self.v0, vn)])
+                        if "output.weight" in g.tensors else self.embed)
+        self.layers = [self._load_layer(il) for il in range(self.n_layer)]
+        self.ple = self._load_ple() if self.ple_layer < self.n_layer else None
+        self.exit_mixer = self._mixer("output_hc")
+        self.reset()
+        self._load_moe()
+        if dev.type != "cpu":
+            torch.xpu.synchronize(dev)
+        self.load_seconds = time.time() - t0
+        if tp.is_main:
+            print(f"  qwen4exp: load done in {self.load_seconds:.1f}s", flush=True)
+
+    # ------------------------------------------------------------------ loader
+
+    def _dequant(self, raw, qtype, n, k):
+        """Raw GGML bytes -> torch f32 [n, k] (whole tensor, row or column
+        subset; ref_dequant infers k from the block arithmetic)."""
+        flat = np.ascontiguousarray(raw).reshape(-1)
+        if qtype == "F32":
+            w = flat.view(np.float32)
+        elif qtype == "F16":
+            w = flat.view(np.uint16).view(np.float16).astype(np.float32)
+        elif qtype == "BF16":
+            w = (flat.view(np.uint16).astype(np.uint32) << 16).view(np.float32)
+        else:
+            w = ref_dequant(flat.reshape(1, -1), qtype)[0] if raw.ndim == 1 \
+                else ref_dequant(raw, qtype)
+        return torch.from_numpy(np.array(w).reshape(n, k)).to(self.tp.device)
+
+    def _wq(self, name, *, runs=None, cols=None) -> F32QWeight:
+        """Dense weight -> F32QWeight [n, k] (dequantized at load; header
+        note). `runs` takes output-side rows, `cols` byte-slices input-side
+        blocks (valid because every run is type-block aligned: Q6_K 256,
+        Q8_0 32, and the parity runs are multiples of 128/256)."""
+        t = self.g.tensors[name]
+        K, N = t.shape                     # ggml order: (inputs, outputs)
+        blk = TYPES[t.type].block
+        if runs is not None:
+            assert cols is None
+            assert all(a % blk == 0 and l % blk == 0 for a, l in runs), name
+            raw = np.concatenate([self.g.rows(name, a, a + l) for a, l in runs], 0)
+            n, k = sum(l for _, l in runs), K
+        elif cols is not None:
+            bb = TYPES[t.type].block_bytes
+            raw = self.g.rows(name, 0, N)
+            raw = np.concatenate([raw[:, (a // blk) * bb:((a + l) // blk) * bb]
+                                  for a, l in cols], 1)
+            n, k = N, sum(l for _, l in cols)
+        else:
+            raw = np.array(self.g.raw(name))
+            n, k = N, K
+        w = self._dequant(raw, t.type, n, k)
+        self._dense_bytes += w.numel() * 4
+        return F32QWeight(w, n, k)
+
+    def _f32(self, name, shape=None):
+        t = self.g.tensors[name]
+        assert t.type == "F32", (name, t.type)
+        w = torch.from_numpy(np.array(self.g.raw(name).view(np.float32)))
+        if shape is not None:
+            w = w.reshape(shape)
+        self._dense_bytes += w.numel() * 4
+        return w.to(self.tp.device)
+
+    def _f32_gather(self, name, shape, ids):
+        w = self._f32(name, shape)[torch.from_numpy(np.asarray(ids, np.int64))]
+        return w.contiguous()
+
+    def _mixer(self, p: str) -> HCMixer:
+        """HC mixer for the `{p}_norm/down/up[/inject]` family; the exit head
+        (`output_hc`) has no inject tensor."""
+        inj = f"{p}_inject.weight"
+        return HCMixer(self._f32(f"{p}_norm.weight", (self.hc_n, self.n_embd)),
+                       self._wq(f"{p}_down.weight"),
+                       self._wq(f"{p}_up.weight"),
+                       self._wq(inj) if inj in self.g.tensors else None,
+                       eps=self.eps)
+
+    def _load_layer(self, il: int):
+        w, r = self.tp.world, self.tp.rank
+        p = f"blk.{il}."
+        L = _Q4Layer()
+        L.kind = "delta" if self.compress[il] == 0 else "qsa"
+        L.mix_attn = self._mixer(p + "hc_attn")
+        L.mix_ffn = self._mixer(p + "hc_ffn")
+        if L.kind == "delta":
+            qkv_runs, value_runs, ids, _ = qkv_parity_runs(
+                self.n_key, self.n_value, self.ssm, w, r)
+            L.qkv = self._wq(p + "attn_qkv.weight", runs=qkv_runs)
+            L.gate = self._wq(p + "attn_gate.weight", runs=value_runs)
+            chans = np.concatenate([np.arange(a, a + l) for a, l in qkv_runs])
+            L.conv = self._f32_gather(p + "ssm_conv1d.weight",
+                                      ((2 * self.n_key + self.n_value) * self.ssm,
+                                       self.conv_k), chans)     # [channel, tap]
+            # alpha/beta share one [2*n_value_l, n_embd] product (driver
+            # splits it again); the rank keeps value heads `ids`.
+            L.ab = F32QWeight(
+                torch.cat([self._f32_gather(p + "ssm_alpha.weight",
+                                            (self.n_value, self.n_embd), ids),
+                           self._f32_gather(p + "ssm_beta.weight",
+                                            (self.n_value, self.n_embd), ids)], 0),
+                2 * self.n_value_l, self.n_embd)
+            L.ssm_a = self._f32_gather(p + "ssm_a", (self.n_value,), ids)
+            L.dt_bias = self._f32_gather(p + "ssm_dt.bias", (self.n_value,), ids)
+            L.out = self._wq(p + "ssm_out.weight", cols=value_runs)
+            L.ssm_norm = self._f32(p + "ssm_norm.weight")
+        else:
+            L.qsa = QSA(
+                self._wq(p + "attn_q.weight",
+                         runs=head_parity_rows(self.n_head, 2 * self.head_dim, w, r)),
+                self._wq(p + "attn_k.weight",
+                         runs=head_parity_rows(self.n_head_kv, self.head_dim, w, r)),
+                self._wq(p + "attn_v.weight",
+                         runs=head_parity_rows(self.n_head_kv, self.head_dim, w, r)),
+                self._wq(p + "attn_output.weight",
+                         cols=head_parity_rows(self.n_head, self.head_dim, w, r)),
+                self._f32(p + "attn_q_norm.weight"),
+                self._f32(p + "attn_k_norm.weight"),
+                self._wq(p + "indexer.q_proj.weight"),    # BF16 -> f32 here
+                self._wq(p + "indexer.k_proj.weight"),
+                self._f32(p + "indexer.q_norm.weight"),
+                self._f32(p + "indexer.k_norm.weight"),
+                n_head=self.n_head_l, n_head_kv=self.n_head_kv_l,
+                head_dim=self.head_dim, idx_heads=self.idx_heads,
+                idx_dim=self.idx_dim, idx_top_k=self.idx_top_k,
+                compress=int(self.compress[il]), rope_n_rot=self.rope_dim,
+                rope_base=self.rope_base, eps=self.eps)
+        return L
+
+    def _load_ple(self):
+        p = f"blk.{self.ple_layer}."
+        return PLE(self._wq(p + "ple_key.weight"),
+                   self._wq(p + "ple_value.weight"),
+                   self._f32(p + "ple_norm_key.weight", (self.hc_n, self.n_embd)),
+                   self._f32(p + "ple_norm_query.weight", (self.hc_n, self.n_embd)),
+                   self._f32(p + "ple_norm_conv.weight", (self.hc_n, self.n_embd)),
+                   self._f32(p + "ple_conv1d.weight", (self.hc_dim, 4)),  # tap last
+                   n_embd=self.n_embd, ngram=self.ple_cfg["ngram"], eps=self.eps)
+
+    # ------------------------------------------------------------- state/kv/ram
+
+    def reset(self):
+        """Fresh sequence: the delta/conv states are replacement-style (never
+        mutated in place), the QSA state dict is empty-and-append, and the PLE
+        conv history plus the host-side token history restart."""
+        self.n_past = 0
+        dev = self.tp.device
+        self.delta_cache = {
+            il: (torch.zeros(self.conv_k - 1, self._qkv_l, device=dev),
+                 torch.zeros(self.n_value_l, self.ssm, self.ssm, device=dev))
+            for il, L in enumerate(self.layers) if L.kind == "delta"}
+        self.qsa_cache = {il: L.qsa.zero_state(dev)
+                          for il, L in enumerate(self.layers) if L.kind == "qsa"}
+        self.ple_state = self.ple.zero_state(dev) if self.ple is not None else None
+        self._ple_hist = np.zeros(0, dtype=np.int64)
+
+    def kv_bytes(self) -> int:
+        """Cache footprint for the memory report. Delta/PLE states are exact;
+        the QSA caches grow by torch.cat with the context, so this reserves
+        the worst case per QSA layer: max_ctx cells of (indexer key f32 +
+        pos i64 + 2 KV rows f32) plus the pooled keys, which accumulate at
+        1/compress of the cells but are bounded by idx_dim per cell."""
+        b = sum((self.conv_k - 1) * self._qkv_l
+                + self.n_value_l * self.ssm * self.ssm
+                for _ in self.delta_cache) * 4
+        if self.ple_state is not None:
+            b += self.ple_state.numel() * 4
+        per_cell = (2 * self.idx_dim + 8 + 2 * self.n_head_kv_l * self.head_dim) * 4
+        return b + len(self.qsa_cache) * self.max_ctx * per_cell
+
+    def memory_report(self) -> dict:
+        """C3 report; `experts`/`pinned_host` cover the store (0 on CPU)."""
+        experts = self.store.memory_bytes() if self.store is not None else 0
+        pinned = self.store.pinned_bytes() if self.store is not None else 0
+        cache = self.kv_bytes()
+        return {"weights": self._weights_bytes, "experts": experts,
+                "cache": cache, "scratch": self._scratch_bytes,
+                "pinned_host": pinned,
+                "device_total": self._weights_bytes + experts + cache
+                + self._scratch_bytes}
+
+    # --------------------------------------------------------------------- MoE
+
+    def _expert_budget(self, dense, kv, scratch, host_total=None):
+        """Expert-store budget: the model must fit with a floor above it
+        (EXPERT_BUDGET_MIN_GB); caps: per-rank D8 device budget, host RAM
+        reserve (world-shared), and the live device total minus overhead."""
+        plan = max(int(D8_BUDGET_GB[self.tp.rank] * 1e9) - dense - kv - scratch, 0)
+        if host_total is None and torch.xpu.device_count() > 0:
+            host_total = read_mem_total_bytes()
+        if host_total and host_total > 0:
+            host_cap = max((host_total - self.EXPERT_HOST_RESERVE_BYTES)
+                           // self.tp.world - dense - kv - scratch, 0)
+            plan = min(plan, host_cap)
+        if torch.xpu.device_count() == 0:
+            return plan
+        gc.collect()
+        torch.xpu.empty_cache()
+        try:
+            total = torch.xpu.mem_get_info(self.tp.device)[1]
+        except (AttributeError, RuntimeError):
+            total = int(D8_BUDGET_GB[self.tp.rank] * 1e9)
+        cap = max(total - self.EXPERT_GPU_OVERHEAD_BYTES - dense - kv - scratch, 0)
+        return min(plan, cap)
+
+    def _expert_store(self, groups, tp, budget):
+        from ..moe import ExpertStore  # lazy import (module header note)
+        return ExpertStore(groups, tp, budget, verbose=True)
+
+    def _expert_store_ladder(self, groups, tp, budget):
+        """Retry the store at 90% budget on OOM down to the floor (gpt-oss
+        S17 recipe, unchanged)."""
+        b, floor = budget, int(self.EXPERT_BUDGET_MIN_GB * 1e9)
+        while b >= floor:
+            try:
+                return self._expert_store(groups, tp, b)
+            except torch.OutOfMemoryError:
+                gc.collect()
+                if torch.device(tp.device).type == "xpu":
+                    torch.xpu.empty_cache()
+                nb = int(b * 0.9)
+                if nb < floor:
+                    raise
+                if tp.is_main:
+                    print(f"  MoE: OOM at {b / 1e9:.2f} GB, retrying {nb / 1e9:.2f} GB",
+                          flush=True)
+                b = nb
+        raise RuntimeError(f"expert budget {b / 1e9:.2f} GB below floor "
+                           f"{floor / 1e9:.2f} GB")
+
+    def _load_moe(self):
+        dev = self.tp.device
+        if dev.type == "cpu" or os.environ.get("PYI_QWEN4EXP_SKIP_MOE"):
+            # CPU scaffold: the ExpertStore page-locks real expert RAM, so
+            # the model test runs the FFN block's zero path instead.
+            self.store, self.moe = None, [None] * self.n_layer
+            self._weights_bytes, self._scratch_bytes = self._dense_bytes, 0
+            if self.tp.is_main:
+                print("  qwen4exp: MoE experts skipped (CPU)", flush=True)
+            return
+        groups = moe_expert_groups(self.g)
+        tiny = 0   # routers, shared gates, shared-expert trio (loaded natively
+        for il in range(self.n_layer):    # by moe_layer, above the store)
+            for t in ("ffn_gate_inp.weight", "ffn_gate_inp_shexp.weight",
+                      "ffn_gate_shexp.weight", "ffn_up_shexp.weight",
+                      "ffn_down_shexp.weight"):
+                tiny += self.g.tensors[f"blk.{il}.{t}"].nbytes
+        dense = self._dense_bytes + tiny
+        kv, scratch = self.kv_bytes(), 1 << 30
+        budget = self._expert_budget(dense, kv, scratch)
+        self._weights_bytes, self._scratch_bytes = dense, scratch
+        if self.tp.is_main:
+            print(f"  MoE: {int(self.g.get('expert_count'))} experts x "
+                  f"{self.n_layer} layers, budget {budget / 1e9:.2f} GB "
+                  f"(dense {dense / 1e9:.2f}, kv {kv / 1e9:.2f}, "
+                  f"scratch {scratch / 1e9:.2f})", flush=True)
+        self.store = self._expert_store_ladder(groups, self.tp, budget)
+        self.moe = [moe_layer(self.g, self.store, il, dev)
+                    for il in range(self.n_layer)]
+        if self.tp.is_main:
+            tot = self.n_layer * len(self.store.local_ids[0])
+            res = sum(len(m.resident) for m in self.store.maps.values())
+            swp = sum(m.S - m.R for m in self.store.maps.values())
+            print(f"    {res} of {tot} local experts resident, {swp} swap slots, "
+                  f"store {self.store.memory_bytes() / 1e9:.2f} GB, "
+                  f"pinned {self.store.pinned_bytes() / 1e9:.2f} GB", flush=True)
+
+    # ---------------------------------------------------------------- forward
+
+    @torch.inference_mode()
+    def forward(self, tokens, chunk: int = 512, all_logits: bool = False):
+        if self.n_past + len(tokens) > self.max_ctx:
+            raise ValueError(f"context full: {self.n_past} + {len(tokens)} "
+                             f"> {self.max_ctx}")
+        dev = self.tp.device
+        got, last = [], None
+        for i0 in range(0, len(tokens), chunk):
+            part = list(tokens[i0:i0 + chunk])
+            T = len(part)
+            ids = torch.tensor(part, dtype=torch.long, device=dev)
+            pos = torch.arange(self.n_past, self.n_past + T, dtype=torch.long,
+                               device=dev)
+            x = self.embed_tokens(ids)
+            # hc_init (Mappa A): the embedding broadcast over the streams.
+            res = x.unsqueeze(1).expand(T, self.hc_n, self.n_embd) \
+                   .reshape(T, self.hc_dim)
+            for il, L in enumerate(self.layers):
+                if self.ple is not None and il == self.ple_layer:
+                    res = self._ple_step(res, part, dev)
+                mixed, inj, _ = L.mix_attn.forward(res)
+                if L.kind == "delta":
+                    blk = self._delta_block(il, L, mixed)
+                elif T == 1:
+                    out, state = L.qsa.decode(mixed, pos[:1], self.qsa_cache[il])[:2]
+                    self.qsa_cache[il] = state
+                    blk = self.tp.all_reduce(out)
+                else:
+                    out, state = L.qsa.forward(mixed, pos, self.qsa_cache[il])[:2]
+                    self.qsa_cache[il] = state
+                    blk = self.tp.all_reduce(out)
+                res = hc_combine(res, blk, inj)
+                mixed2, inj2, _ = L.mix_ffn.forward(res)
+                res = hc_combine(res, self._ffn_block(il, mixed2), inj2)
+            mixed, _, _ = self.exit_mixer.forward(res)
+            lg = self.tp.all_gather(self.lm_head(mixed))
+            if all_logits:
+                got.append(lg)
+            last = lg[-1]
+            self.n_past += T
+        return torch.cat(got, 0) if all_logits else last
+
+    def embed_tokens(self, ids):
+        local = (ids >= self.v0) & (ids < self.v1)
+        rows = self.embed.w[(ids - self.v0).clamp(0, self.v1 - self.v0 - 1)]
+        return self.tp.all_reduce(rows * local.unsqueeze(-1))
+
+    def _ple_step(self, res, part, dev):
+        idx = ple_row_indices(part, self._ple_hist, **self.ple_cfg)
+        emb = ple_gather_embedding(self.g, PLE_TABLE, idx, device=dev)
+        nheads = (self.ple_cfg["ngram"] - 1) * self.ple_cfg["heads_per_ngram"]
+        emb = emb.view(len(part), nheads, self.ple_dim).reshape(len(part),
+                                                                self.n_embd)
+        res, self.ple_state, _ = self.ple.forward(res, emb, self.ple_state)
+        self._ple_hist = np.concatenate([self._ple_hist,
+                                         np.asarray(part, dtype=np.int64)])
+        return res
+
+    def _delta_block(self, il, L, mixed):
+        """The chain-verified pure-torch DeltaNet (test_qwen4exp_chain
+        ._deltanet, TP-split); states are replacement-style, so conv_prefill/
+        delta_prefill run read-only on the cached ones."""
+        from .. import deltanet  # lazy: Triton kernels live in that module
+        T, S = mixed.shape[0], self.ssm
+        nk, nv = self.n_key_l, self.n_value_l
+        qkv = L.qkv(mixed)                       # [T, qkv_l]
+        z = L.gate(mixed)                        # [T, nv*S]
+        ab = L.ab(mixed)                         # [T, 2*nv]
+        g = L.ssm_a * F.softplus(ab[:, :nv] + L.dt_bias)
+        beta = torch.sigmoid(ab[:, nv:])         # Mappa A.3
+        conv, state = self.delta_cache[il]
+        qkv, conv_new = deltanet.conv_prefill(qkv, conv, L.conv)
+        q = deltanet.l2norm_qk(qkv[:, :nk * S].view(T, nk, S), self.eps)
+        k = deltanet.l2norm_qk(qkv[:, nk * S:2 * nk * S].view(T, nk, S), self.eps)
+        v = qkv[:, 2 * nk * S:].view(T, nv, S)
+        out, st_new = deltanet.delta_prefill(q, k, v, g, beta, state)
+        self.delta_cache[il] = (conv_new, st_new)
+        # Flash-Next gate is sigmoid(z), not qwen35's silu(z) (S24 chain).
+        y = out * torch.rsqrt(out.pow(2).mean(-1, keepdim=True) + self.eps) \
+            * L.ssm_norm
+        y = y * torch.sigmoid(z.view(T, nv, S))
+        return self.tp.all_reduce(L.out(y.reshape(T, -1)))
+
+    def _ffn_block(self, il, x):
+        M = self.moe[il]
+        if M is None:
+            return torch.zeros_like(x)
+        if x.shape[0] == 1:
+            return M.decode(x[0]).view(1, -1)   # [k] flat, all-reduced, +shared
+        return M.prefill(x)                     # [T, k], all-reduced, +shared

@@ -13,4 +13,7 @@ def load_model(g: GGUFFile, tp: TP, **kw):
     if g.arch == "qwen35":
         from .qwen35 import Qwen35
         return Qwen35(g, tp, **kw)
+    if g.arch == "qwen4exp":
+        from .qwen4exp import Qwen4Exp
+        return Qwen4Exp(g, tp, **kw)
     raise NotImplementedError(f"architecture {g.arch!r} not supported yet")
