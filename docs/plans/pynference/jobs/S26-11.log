@@ -1,0 +1,16 @@
+== start 15:14:26
+MemTotal:       63655308 kB
+MemAvailable:   60706140 kB
+GPUActive:           648 kB
+== node replay xpu (15:14:26)
+== nodes exit 0 (15:15:48) (atteso 0)
+PROBE prefill: finite=248320/248320 top5=[(11751, 0.1768), (264, 0.0771), (524, 0.0405), (271, 0.0342), (31586, 0.0333)]
+PROBE decode: finite=248320/248320 top5=[(264, 0.1068), (3428, 0.0425), (271, 0.0348), (279, 0.0317), (11751, 0.0289)]
+NODE attn_output-3#0 cos=0.243073 dsumL1=4.42e-03 maxabs=2.887e-01 fin_bad=0 FAIL
+compared 19 nodes; FIRST_DIVERGING: attn_output-3
+OK=18 SKIP=26
+floor MemAvailable 27.26 GiB, max GPUActive 23.70 GiB
+== summary nodes=0 15:15:48
+MemAvailable:   60802596 kB
+GPUActive:           648 kB
+== end 15:15:48
