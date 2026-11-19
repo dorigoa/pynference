@@ -1,0 +1,45 @@
+== start 10:35:19
+MemTotal:       63655308 kB
+MemAvailable:   60239312 kB
+GPUActive:          3752 kB
+== compare_probs ours --ref (10:35:19)
+== ours exit 1 (10:35:28) (atteso 0)
+[rank0]: Traceback (most recent call last):
+[rank0]: AssertionError: blk.0.attn_qkv.weight
+[rank1]: Traceback (most recent call last):
+[rank1]: AssertionError: blk.0.attn_qkv.weight
+Traceback (most recent call last):
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 384, in wrapper
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+  error_file: <N/A>
+  error_file: <N/A>
+floor MemAvailable 49.66 GiB, max GPUActive 0.14 GiB
+== diff --strict (10:35:28)
+== diff exit 1 (10:35:29) (atteso 0 = C8)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/bench/compare_probs.py", line 196, in <module>
+    main()
+    ~~~~^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 192, in main
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S26-7/ours_probs.json'
+== ppl (10:35:29)
+== ppl exit 1 (10:35:38) (atteso 0)
+[rank0]: Traceback (most recent call last):
+[rank0]: AssertionError: blk.0.attn_qkv.weight
+[rank1]: Traceback (most recent call last):
+[rank1]: AssertionError: blk.0.attn_qkv.weight
+Traceback (most recent call last):
+    raise ChildFailedError(
+ref ppl:
+1.50.119.972 I Final estimate: PPL = 1.0002 +/- 0.00008
+floor MemAvailable 48.70 GiB, max GPUActive 2.58 GiB
+== summary ours=1 diff=1 ppl=1 10:35:38
+MemAvailable:   60317788 kB
+GPUActive:          3752 kB
+== end 10:35:38

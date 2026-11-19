@@ -830,18 +830,21 @@ class Qwen4Exp:
 
     def _wq(self, name, *, runs=None, cols=None) -> F32QWeight:
         """Dense weight -> F32QWeight [n, k] (dequantized at load; header
-        note). `runs` takes output-side rows, `cols` byte-slices input-side
-        blocks (valid because every run is type-block aligned: Q6_K 256,
+        note). `runs` takes output-side rows — quant blocks are packed along
+        the input axis INSIDE each GGUF row, so output-row slicing needs no
+        block alignment (verified: row-slice dequant == slice of full
+        dequant, S26-7 debug). `cols` byte-slices input-side blocks, so it
+        does (valid because every col run is type-block aligned: Q6_K 256,
         Q8_0 32, and the parity runs are multiples of 128/256)."""
         t = self.g.tensors[name]
         K, N = t.shape                     # ggml order: (inputs, outputs)
         blk = TYPES[t.type].block
         if runs is not None:
             assert cols is None
-            assert all(a % blk == 0 and l % blk == 0 for a, l in runs), name
             raw = np.concatenate([self.g.rows(name, a, a + l) for a, l in runs], 0)
             n, k = sum(l for _, l in runs), K
         elif cols is not None:
+            assert all(a % blk == 0 and l % blk == 0 for a, l in cols), name
             bb = TYPES[t.type].block_bytes
             raw = self.g.rows(name, 0, N)
             raw = np.concatenate([raw[:, (a // blk) * bb:((a + l) // blk) * bb]

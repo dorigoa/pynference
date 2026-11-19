@@ -114,3 +114,40 @@ def test_memory_report_keys(model):
     assert rep["cache"] == model.kv_bytes()
     assert rep["device_total"] == (rep["weights"] + rep["experts"]
                                    + rep["cache"] + rep["scratch"])
+
+
+@needs_model
+def test_wq_tp2_parity_runs_load_and_match():
+    """S26-7: the DeltaNet qkv/gate are Q6_K (quant block 256) but the
+    world=2 parity runs are 128 rows. Quant blocks pack the INPUT axis
+    inside each GGUF row, so slicing OUTPUT rows needs no block alignment
+    (the loader's old assert over-constrained this and the GPU job died).
+    Load rank-0 runs through `_wq` and compare against the matching slice
+    of a full dequant, row for row."""
+    from types import MethodType, SimpleNamespace
+
+    import numpy as np
+
+    from pynference.models.qwen4exp import Qwen4Exp
+    from pynference.models.qwen35 import qkv_parity_runs
+    from pynference.quant.ref import ref_dequant
+
+    g = GGUFFile(MODEL)
+    stub = SimpleNamespace(g=g, tp=SimpleNamespace(
+        world=2, rank=0, device=torch.device("cpu")), _dense_bytes=0)
+    stub._dequant = MethodType(Qwen4Exp._dequant, stub)   # used inside _wq
+    nk = int(g.get("ssm.group_count"))
+    nv = int(g.get("ssm.time_step_rank"))
+    s = int(g.get("ssm.state_size"))
+    runs, vruns, _, _ = qkv_parity_runs(nk, nv, s, 2, 0)
+    assert min(l for _, l in runs) < 256   # the S26-7 case: run < Q6_K block
+
+    for name, rr in (("blk.0.attn_qkv.weight", runs),
+                     ("blk.0.attn_gate.weight", vruns)):
+        t = g.tensors[name]
+        K, N = t.shape
+        w = Qwen4Exp._wq(stub, name, runs=rr)
+        assert (w.N, w.K) == (sum(l for _, l in rr), K)
+        full = torch.from_numpy(ref_dequant(np.array(g.rows(name, 0, N)), t.type))
+        want = torch.cat([full[a:a + l] for a, l in rr])
+        assert torch.equal(w.w, want)
