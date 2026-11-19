@@ -268,7 +268,13 @@ def main():
                                zip(top.values, top.indices)]}", flush=True)
         model.reset()                     # fresh caches for the node replay
 
-    cap = replay(model, None)
+    # Production regime: Qwen4Exp.forward carries @torch.inference_mode(), so
+    # the lazily created TP._buf collective buffers are inference tensors; the
+    # probe forward above created them. replay() calls the submodules directly
+    # and must hold the same mode (S26-10: all_reduce's b.copy_ on an
+    # inference tensor raised outside InferenceMode).
+    with torch.inference_mode():
+        cap = replay(model, None)
     if model.tp.rank != 0:
         return                            # rank 0 prints the comparison
     first = None

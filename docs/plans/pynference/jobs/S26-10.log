@@ -1,0 +1,22 @@
+== start 15:04:47
+MemTotal:       63655308 kB
+MemAvailable:   60692572 kB
+GPUActive:           648 kB
+== node replay xpu (15:04:47)
+== nodes exit 1 (15:06:23) (atteso 0)
+[rank1]: Traceback (most recent call last):
+[rank1]: RuntimeError: Inplace update to inference tensor outside InferenceMode is not allowed.You can make a clone to get a normal tensor before doing inplace update.See https://github.com/pytorch/rfcs/pull/17 for more details.
+PROBE prefill: finite=248320/248320 top5=[(11751, 0.1768), (264, 0.0771), (524, 0.0405), (271, 0.0342), (31586, 0.0333)]
+PROBE decode: finite=248320/248320 top5=[(264, 0.1068), (3428, 0.0425), (271, 0.0348), (279, 0.0317), (11751, 0.0289)]
+[rank0]: Traceback (most recent call last):
+[rank0]: RuntimeError: Inplace update to inference tensor outside InferenceMode is not allowed.You can make a clone to get a normal tensor before doing inplace update.See https://github.com/pytorch/rfcs/pull/17 for more details.
+Traceback (most recent call last):
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+tests/cpu/s26_nodes.py FAILED
+OK=0 SKIP=0
+floor MemAvailable 29.89 GiB, max GPUActive 23.66 GiB
+== summary nodes=1 15:06:23
+MemAvailable:   60506404 kB
+GPUActive:           648 kB
+== end 15:06:23
