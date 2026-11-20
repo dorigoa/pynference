@@ -201,6 +201,16 @@ def hc_combine(res_hc: torch.Tensor, block_out: torch.Tensor, inject: torch.Tens
             + block_out.unsqueeze(1) * w.unsqueeze(-1)).reshape(T, channels)
 
 
+def hc_combine_(res_hc: torch.Tensor, block_out: torch.Tensor, inject: torch.Tensor) -> torch.Tensor:
+    """`hc_combine` writing into `res_hc` in place (same numbers) — the
+    decode/graph path needs `res_hc` to keep one address across steps."""
+    T = res_hc.shape[0]
+    hc = inject.shape[1]
+    w = 2.0 * torch.sigmoid(inject)
+    res_hc.view(T, hc, -1).add_(block_out.unsqueeze(1) * w.unsqueeze(-1))
+    return res_hc
+
+
 class PLE:
     """The PLE block (qwen4exp.cpp build_ple 1417-1505), run on `res_hc`
     before blk.1's attention mixer.
@@ -232,11 +242,14 @@ class PLE:
     def zero_state(self, device=None) -> torch.Tensor:
         return torch.zeros(self.hist, self.channels, device=device)
 
-    def forward(self, res_hc: torch.Tensor, emb: torch.Tensor, state: torch.Tensor):
+    def forward(self, res_hc: torch.Tensor, emb: torch.Tensor, state: torch.Tensor,
+                *, inplace_state: bool = False):
         """-> (res_hc_out, new_state, parts).
 
         parts keeps the cb()-dumped intermediates for the dump comparison
         (torch layouts: ple_gate [T, hc], *_value/conv [T, hc, n_embd]).
+        With `inplace_state` the write-back tail lands in `state` itself and
+        is returned (same values; the S27 graph decode needs a fixed buffer).
         """
         T = res_hc.shape[0]
         C, hc = self.n_embd, self.hc
@@ -260,7 +273,12 @@ class PLE:
         conv_out = silu(conv).view(T, hc, C)
 
         res = res_hc + (gated + conv_out).reshape(T, self.channels)
-        new_state = x[-self.hist:].clone()  # write-back tail (build_conv_state_at)
+        tail = x[-self.hist:]  # write-back tail (build_conv_state_at)
+        if inplace_state:
+            state.copy_(tail)
+            new_state = state
+        else:
+            new_state = tail.clone()
         parts = {
             "ple_key_raw": raw_key, "ple_key": key, "ple_value": value,
             "ple_query": query, "ple_s": s, "ple_gate_in": gate_in,
@@ -337,17 +355,39 @@ class QSA:
         self.kq_scale = 1.0 / math.sqrt(head_dim)
         self.idx_scale = 1.0 / math.sqrt(idx_dim)
 
-    def zero_state(self, device=None) -> dict:
+    def zero_state(self, device=None, capacity: int = 0, tables=None) -> dict:
         """Append-only caches: raw indexer keys + their cell positions, the
         K/V cache (cells in sequence order) and, for `decode`, the pooled
         indexer keys per block (`forward` recomputes those from the raw rows
-        each call and ignores/does not carry `pool`)."""
-        e = lambda *shape: torch.zeros(0, *shape, device=device)  # noqa: E731
-        return {"idx_keys": e(self.idx_dim),
-                "idx_pos": torch.zeros(0, dtype=torch.int64, device=device),
-                "kv_k": e(self.n_head_kv, self.head_dim),
-                "kv_v": e(self.n_head_kv, self.head_dim),
-                "pool": e(self.idx_dim)}
+        each call and ignores/does not carry `pool`).
+
+        `capacity > 0` instead returns the S27 STATIC state: every cache is a
+        fixed buffer sized for `capacity` cells, a device scalar `n` counts
+        the valid ones, and `decode` updates the buffers in place (no cat, no
+        rope-table rebuild, no host sync — the shape the XPUGraph replay
+        needs). `tables` = the shared (cos, sin) rope tables for the
+        positions. `absorb` folds an append-style step (prefill chunk) into a
+        static state. Static states are recognized by their `n` entry."""
+        if capacity <= 0:
+            e = lambda *shape: torch.zeros(0, *shape, device=device)  # noqa: E731
+            return {"idx_keys": e(self.idx_dim),
+                    "idx_pos": torch.zeros(0, dtype=torch.int64, device=device),
+                    "kv_k": e(self.n_head_kv, self.head_dim),
+                    "kv_v": e(self.n_head_kv, self.head_dim),
+                    "pool": e(self.idx_dim)}
+        cp = self.compress
+        pool_cap = (capacity + cp - 1) // cp
+        cells = pool_cap * cp           # whole blocks, so `vis` can read any slot
+        cos, sin = tables if tables is not None else \
+            rope_table(self.rope_n_rot, self.rope_base, None, capacity, device)
+        return {"n": torch.zeros((), dtype=torch.int64, device=device),
+                "idx_keys": torch.zeros(cells, self.idx_dim, device=device),
+                # padded cells read "far in the future": never visible, never kept
+                "idx_pos": torch.full((cells,), 1 << 60, dtype=torch.int64, device=device),
+                "kv_k": torch.zeros(capacity, self.n_head_kv, self.head_dim, device=device),
+                "kv_v": torch.zeros(capacity, self.n_head_kv, self.head_dim, device=device),
+                "pool": torch.zeros(pool_cap, self.idx_dim, device=device),
+                "cos": cos, "sin": sin}
 
     def forward(self, cur: torch.Tensor, pos: torch.Tensor, state: dict):
         """cur [T, n_embd], pos [T] int64 absolute M-RoPE positions (all four
@@ -365,13 +405,23 @@ class QSA:
         dev = cur.device
         pos = pos.to(device=dev, dtype=torch.int64)
         cp = self.compress
+        if "n" in state:
+            # static state (S27): run the step on views of its first `n0`
+            # cells and hand back an append-style state; the caller folds it
+            # in place with `absorb`. Host sync is fine — prefill is not
+            # graph-captured.
+            n0 = int(state["n"])
+            prev = {k: state[k][:n0]
+                    for k in ("idx_keys", "idx_pos", "kv_k", "kv_v")}
+        else:
+            prev = state
 
         # ---- indexer: pooled keys, query, scores, selection (build_qsa_sel)
         k_raw = self.idx_k(cur)                                       # [T, 128]
         # the cache is an f16 buffer (SET_ROWS f16) that pooling gathers
         # back through, so the pooled keys see f16-rounded raw rows
-        idx_keys = torch.cat([state["idx_keys"].to(dev), k_raw], 0).half().float()  # [N, 128]
-        idx_pos = torch.cat([state["idx_pos"].to(dev), pos])          # [N]
+        idx_keys = torch.cat([prev["idx_keys"].to(dev), k_raw], 0).half().float()  # [N, 128]
+        idx_pos = torch.cat([prev["idx_pos"].to(dev), pos])          # [N]
         N = idx_keys.shape[0]
         n_pool = (N + cp - 1) // cp
 
@@ -417,8 +467,8 @@ class QSA:
         k_roped = rope_neox(k_normed, cos_all[pos], sin_all[pos])
         v = self.wv(cur).view(T, self.n_head_kv, self.head_dim)
 
-        kv_k = torch.cat([state["kv_k"].to(dev), k_roped], 0)
-        kv_v = torch.cat([state["kv_v"].to(dev), v], 0)
+        kv_k = torch.cat([prev["kv_k"].to(dev), k_roped], 0)
+        kv_v = torch.cat([prev["kv_v"].to(dev), v], 0)
 
         # ---- masked GQA attention + gate (build_attn_qsa / 1069-1078)
         attn = self._attend(q_roped, kv_k, kv_v, sel)
@@ -428,7 +478,7 @@ class QSA:
 
         parts = {
             "indexer_k_raw": k_raw,
-            "indexer_pool_k_new": pooled[state["idx_keys"].shape[0] // cp:],
+            "indexer_pool_k_new": pooled[prev["idx_keys"].shape[0] // cp:],
             "indexer_k": pooled,
             "indexer_q": q_idx,
             "indexer_score": score.T,                                   # [T, n_pool]
@@ -475,7 +525,12 @@ class QSA:
         rule of `_keep_cells` reduces to exactly that block. Returns
         (out [1, n_embd], new_state with `pool`, parts) — same parts keys as
         `forward`, T=1.
+
+        A static state (`zero_state(capacity=...)`) takes `_decode_static`
+        instead: same numbers, in-place fixed-shape buffers, parts=None.
         """
+        if "n" in state:
+            return self._decode_static(cur, pos, state)
         dev = cur.device
         pos = pos.to(device=dev, dtype=torch.int64).view(1)
         cp = self.compress
@@ -576,6 +631,124 @@ class QSA:
         new_state = {"idx_keys": idx_keys, "idx_pos": idx_pos,
                      "kv_k": kv_k, "kv_v": kv_v, "pool": pool}
         return out, new_state, parts
+
+    def _decode_static(self, cur: torch.Tensor, pos: torch.Tensor, state: dict):
+        """One decode token against a static state (S27 graph decode): every
+        cache is a fixed buffer updated in place, `state["n"]` (device
+        int64) counts the valid cells, and the whole step is device-only and
+        fixed-shape — no cat, no rope-table rebuild (shared tables in the
+        state), no `.item()`, so `kernels.qsa_attn_decode` and the segment
+        XPUGraph can bake it. Same numbers as `decode`:
+
+          * the only pool row whose clamp can change is the one the new cell
+            lands in — exactly one row per step, `nb = n // cp`;
+          * scoring runs over the pool rows that exist (`n_new // cp`), like
+            `decode`, not over the whole capacity: the top-k cut is a
+            relative ranking, so scoring the sentinel-hidden padding rows
+            too would let a winner be a -inf row and drop a real block whose
+            score is lower; rows past the cut could never be picked anyway;
+          * attention gathers from the full-capacity K/V cache; the kernel
+            (and the CPU `sel`) only touch cells in the fixed idx list.
+        parts is None: the dump-parity nodes belong to the append path.
+        """
+        dev = cur.device
+        pos = pos.to(device=dev, dtype=torch.int64).view(1)
+        p0 = pos.view(())
+        cp = self.compress
+        n = state["n"]
+        n_new = n + 1
+
+        k_raw = self.idx_k(cur)                                       # [1, 128]
+        state["idx_keys"].index_copy_(0, n.view(1), k_raw.half().float())
+        state["idx_pos"].index_copy_(0, n.view(1), pos)
+
+        nb = torch.div(n, cp, rounding_mode="floor")                  # the new cell's block
+        cells = nb * cp + torch.arange(cp, device=dev)
+        cid = torch.where(cells <= n, cells, torch.zeros_like(cells))  # GET_ROWS -> row 0
+        row = grouped_norm(state["idx_keys"][cid].sum(0) * (1.0 / cp),
+                           self.idx_k_norm, self.eps)
+        state["pool"].index_copy_(0, nb.view(1), row.unsqueeze(0))
+        pool = state["pool"]
+        pool_cap = pool.shape[0]
+
+        cos_all, sin_all = state["cos"], state["sin"]
+        q_idx = self.idx_q(cur).view(1, self.idx_heads, self.idx_dim)
+        q_idx = grouped_norm(q_idx, self.idx_q_norm, self.eps)
+        q_idx = rope_neox(q_idx, cos_all[pos], sin_all[pos])
+
+        n_pool = torch.div(n_new, cp, rounding_mode="floor").clamp(max=pool_cap)
+        rows = torch.arange(pool_cap, device=dev) < n_pool
+        last = state["idx_pos"][torch.arange(pool_cap, device=dev) * cp + (cp - 1)]
+        vis = (last <= p0) & rows
+        score = q_idx.new_zeros(pool_cap)
+        for h in range(self.idx_heads):
+            score = score + torch.relu(pool @ q_idx[0, h])
+        score = score * self.idx_scale
+        score = torch.where(vis, score, score.new_full((), float("-inf")))
+        score = torch.where(rows, score, score.new_full((), float("-inf")))
+
+        k = min(pool_cap, self.n_top_pool)
+        top = score.topk(k).indices
+        bcells = top[:, None] * cp + torch.arange(cp, device=dev)
+        ok = vis[top][:, None] & (bcells < n_new)
+        head = torch.where(ok, bcells, torch.full_like(bcells, -1)).reshape(-1)
+        tail = nb * cp + torch.arange(cp, device=dev)                 # the incomplete last block
+        ok_tail = (tail < n_new) & (~vis[nb].view(1)) \
+            & (state["idx_pos"][torch.minimum(tail, n)] <= p0)
+        idx = torch.cat([head, torch.where(ok_tail, tail, torch.full_like(tail, -1))]) \
+            .to(torch.int32)
+
+        q_full = self.wq(cur)
+        qv = q_full.view(1, self.n_head, 2 * self.head_dim)
+        q_pre, gate = qv[..., :self.head_dim], qv[..., self.head_dim:]
+        q_normed = grouped_norm(q_pre, self.q_norm, self.eps)
+        q_roped = rope_neox(q_normed, cos_all[pos], sin_all[pos])
+        k_pre = self.wk(cur).view(1, self.n_head_kv, self.head_dim)
+        k_normed = grouped_norm(k_pre, self.k_norm, self.eps)
+        k_roped = rope_neox(k_normed, cos_all[pos], sin_all[pos])
+        v = self.wv(cur).view(1, self.n_head_kv, self.head_dim)
+        state["kv_k"].index_copy_(0, n.view(1), k_roped)
+        state["kv_v"].index_copy_(0, n.view(1), v)
+
+        if dev.type == "cpu":
+            sel = torch.full((state["kv_k"].shape[0],), float("-inf"), device=dev)
+            sel[idx[idx >= 0].long()] = 0.0
+            attn = self._attend(q_roped, state["kv_k"], state["kv_v"], sel.unsqueeze(0))
+        else:
+            from pynference import kernels
+            attn = kernels.qsa_attn_decode(q_roped[0].contiguous(), state["kv_k"],
+                                           state["kv_v"], idx, self.kq_scale).unsqueeze(0)
+
+        attn_flat = attn.reshape(1, self.n_head * self.head_dim)
+        gate_sig = torch.sigmoid(gate.reshape(1, self.n_head * self.head_dim))
+        out = self.wo(attn_flat * gate_sig)
+        state["n"].add_(1)
+        return out, state, None
+
+    def absorb(self, state: dict, new: dict) -> None:
+        """Fold an append-style step state (`forward`'s `new_state`) into a
+        static `state` in place: copy the added rows, rebuild the pool rows
+        from floor(n/cp) up — the previously-partial block's clamped gather
+        changed too — and set `n`. Prefill-only (host values fine); the pool
+        formula is `decode`'s, so the folded state scores identically."""
+        n = int(state["n"])
+        nn = new["idx_keys"].shape[0]
+        assert nn <= state["kv_k"].shape[0], "static QSA state over capacity"
+        if nn > n:
+            # `new` is forward's full concatenated state, not just the delta
+            for key in ("idx_keys", "idx_pos", "kv_k", "kv_v"):
+                state[key][n:nn].copy_(new[key][n:])
+        cp = self.compress
+        n_pool = (nn + cp - 1) // cp
+        b0 = n // cp
+        if n_pool > b0:
+            dev = state["pool"].device
+            rows = torch.arange(b0, n_pool, device=dev)
+            cells = rows[:, None] * cp + torch.arange(cp, device=dev)
+            cid = torch.where(cells < nn, cells, torch.zeros_like(cells))
+            state["pool"][b0:n_pool] = grouped_norm(
+                state["idx_keys"][cid].sum(1) * (1.0 / cp), self.idx_k_norm, self.eps)
+        state["n"].fill_(nn)
 
     def _keep_cells(self, score: torch.Tensor, vis: torch.Tensor,
                     idx_pos: torch.Tensor, pos: torch.Tensor, n_pool: int) -> torch.Tensor:
@@ -981,16 +1154,31 @@ class Qwen4Exp:
 
     def reset(self):
         """Fresh sequence: the delta/conv states are replacement-style (never
-        mutated in place), the QSA state dict is empty-and-append, and the PLE
-        conv history plus the host-side token history restart."""
+        mutated in place), the PLE conv history plus the host-side token
+        history restart.
+
+        On XPU the QSA states are the S27 STATIC buffers (fixed at max_ctx,
+        shared rope tables) — the shape the segmented graph decode replays;
+        the CPU keeps the append-style state so the reference tests run the
+        original code path. ~254 MB/rank at max_ctx, inside the kv_bytes()
+        reservation. A new reset invalidates any captured decode graphs (they
+        pin the freed buffers), so `_capture` runs again on the next decode."""
         self.n_past = 0
         dev = self.tp.device
         self.delta_cache = {
             il: (torch.zeros(self.conv_k - 1, self._qkv_l, device=dev),
                  torch.zeros(self.n_value_l, self.ssm, self.ssm, device=dev))
             for il, L in enumerate(self.layers) if L.kind == "delta"}
-        self.qsa_cache = {il: L.qsa.zero_state(dev)
+        cap = self.max_ctx if torch.xpu.device_count() > 0 else 0
+        if cap and not hasattr(self, "_rope_cs"):
+            self._rope_cs = rope_table(self.rope_dim, self.rope_base, None,
+                                       self.max_ctx, dev)
+        tables = getattr(self, "_rope_cs", None)
+        self.qsa_cache = {il: L.qsa.zero_state(dev, cap, tables)
                           for il, L in enumerate(self.layers) if L.kind == "qsa"}
+        self.ple_state = self.ple.zero_state(dev) if self.ple is not None else None
+        self._ple_hist = np.zeros(0, dtype=np.int64)
+        self._g0 = None
         self.ple_state = self.ple.zero_state(dev) if self.ple is not None else None
         self._ple_hist = np.zeros(0, dtype=np.int64)
 
@@ -1143,6 +1331,9 @@ class Qwen4Exp:
         if self.n_past + len(tokens) > self.max_ctx:
             raise ValueError(f"context full: {self.n_past} + {len(tokens)} "
                              f"> {self.max_ctx}")
+        if (len(tokens) == 1 and not all_logits and self.fast_decode
+                and self.store is not None):
+            return self.decode(tokens[0])
         dev = self.tp.device
         got, last = [], None
         for i0 in range(0, len(tokens), chunk):
@@ -1161,13 +1352,15 @@ class Qwen4Exp:
                 mixed, inj, _ = L.mix_attn.forward(res)
                 if L.kind == "delta":
                     blk = self._delta_block(il, L, mixed)
-                elif T == 1:
-                    out, state = L.qsa.decode(mixed, pos[:1], self.qsa_cache[il])[:2]
-                    self.qsa_cache[il] = state
-                    blk = self.tp.all_reduce(out)
                 else:
-                    out, state = L.qsa.forward(mixed, pos, self.qsa_cache[il])[:2]
-                    self.qsa_cache[il] = state
+                    call, pos_arg = (L.qsa.decode, pos[:1]) if T == 1 \
+                        else (L.qsa.forward, pos)
+                    out, new = call(mixed, pos_arg, self.qsa_cache[il])[:2]
+                    if new is not self.qsa_cache[il]:
+                        if "n" in self.qsa_cache[il]:
+                            L.qsa.absorb(self.qsa_cache[il], new)  # keep the buffers
+                        else:
+                            self.qsa_cache[il] = new
                     blk = self.tp.all_reduce(out)
                 res = hc_combine(res, blk, inj)
                 mixed2, inj2, _ = L.mix_ffn.forward(res)
@@ -1197,10 +1390,13 @@ class Qwen4Exp:
                                          np.asarray(part, dtype=np.int64)])
         return res
 
-    def _delta_block(self, il, L, mixed):
+    def _delta_block(self, il, L, mixed, inplace: bool = False):
         """The chain-verified pure-torch DeltaNet (test_qwen4exp_chain
-        ._deltanet, TP-split); states are replacement-style, so conv_prefill/
-        delta_prefill run read-only on the cached ones."""
+        ._deltanet, TP-split). States are replacement-style by default;
+        `inplace=True` (S27 graph decode, T=1) writes the new conv/ssm state
+        back into the cached buffers via the `state_out` kwargs — the graph
+        segments replay against fixed addresses — and the T=1 gate tail runs
+        the fused `norm_sigmoid_decode` kernel (CPU twin in tests)."""
         from .. import deltanet  # lazy: Triton kernels live in that module
         T, S = mixed.shape[0], self.ssm
         nk, nv = self.n_key_l, self.n_value_l
@@ -1210,16 +1406,28 @@ class Qwen4Exp:
         g = L.ssm_a * F.softplus(ab[:, :nv] + L.dt_bias)
         beta = torch.sigmoid(ab[:, nv:])         # Mappa A.3
         conv, state = self.delta_cache[il]
-        qkv, conv_new = deltanet.conv_prefill(qkv, conv, L.conv)
+        if inplace:
+            qkv, _ = deltanet.conv_prefill(qkv, conv, L.conv, state_out=conv)
+        else:
+            qkv, conv_new = deltanet.conv_prefill(qkv, conv, L.conv)
         q = deltanet.l2norm_qk(qkv[:, :nk * S].view(T, nk, S), self.eps)
         k = deltanet.l2norm_qk(qkv[:, nk * S:2 * nk * S].view(T, nk, S), self.eps)
         v = qkv[:, 2 * nk * S:].view(T, nv, S)
-        out, st_new = deltanet.delta_prefill(q, k, v, g, beta, state)
-        self.delta_cache[il] = (conv_new, st_new)
+        if inplace:
+            out, _ = deltanet.delta_prefill(q, k, v, g, beta, state,
+                                            state_out=state)
+        else:
+            out, st_new = deltanet.delta_prefill(q, k, v, g, beta, state)
+            self.delta_cache[il] = (conv_new, st_new)
         # Flash-Next gate is sigmoid(z), not qwen35's silu(z) (S24 chain).
-        y = out * torch.rsqrt(out.pow(2).mean(-1, keepdim=True) + self.eps) \
-            * L.ssm_norm
-        y = y * torch.sigmoid(z.view(T, nv, S))
+        if T == 1:
+            y = deltanet.norm_sigmoid_decode(out[0], z.view(nv, S),
+                                             L.ssm_norm, self.eps) \
+                  .reshape(1, nv * S)
+        else:
+            y = out * torch.rsqrt(out.pow(2).mean(-1, keepdim=True) + self.eps) \
+                * L.ssm_norm
+            y = y * torch.sigmoid(z.view(T, nv, S))
         return self.tp.all_reduce(L.out(y.reshape(T, -1)))
 
     def _ffn_block(self, il, x):
@@ -1229,3 +1437,183 @@ class Qwen4Exp:
         if x.shape[0] == 1:
             return M.decode(x[0]).view(1, -1)   # [k] flat, all-reduced, +shared
         return M.prefill(x)                     # [T, k], all-reduced, +shared
+
+    # ---- segmented decode (S27, the gptoss S18 pattern) ----
+    # One token becomes 1 + 2*n_layer + 1 small graphs: G0 (embedding -> hc
+    # residual), A[il] (previous layer's MoE reduce+shared + PLE step + attn
+    # mixer/delta-or-static-QSA + ffn mixer + router logits), B[il] (MoE
+    # expert body), GF (last reduce + exit mixer + head). The one host sync
+    # per layer is `decode_route` between A[il] and B[il]. Every buffer the
+    # graphs touch is static: _res/_ffn_in/_ple_emb/_inj slots, the MoE
+    # decode buffers, the static QSA states, the delta/PLE state buffers
+    # (`_delta_block(inplace=True)`, PLE `inplace_state=True`), and the
+    # device twins of token/pos. Cross-graph tensors (_lg, _inj) are pool
+    # tensors held by Python references, so their addresses survive replays
+    # (gptoss precedent). Requires the store (GPU): on CPU `store` is None
+    # and `forward` keeps running the reference path.
+
+    def _init_decode(self) -> None:
+        if getattr(self, "_res", None) is not None:
+            return
+        assert self.store is not None and all(m is not None for m in self.moe), \
+            "segmented decode needs the expert store (GPU)"
+        dev = self.tp.device
+        host = torch.zeros(2, dtype=torch.long)
+        self._host = host.pin_memory()
+        self._dbuf = torch.zeros(2, dtype=torch.long, device=dev)
+        self._ids, self._pos = self._dbuf[0:1], self._dbuf[1:2]
+        self._res = torch.zeros(1, self.hc_dim, dtype=torch.float32, device=dev)
+        self._ffn_in = torch.zeros(1, self.n_embd, dtype=torch.float32, device=dev)
+        self._ple_emb = torch.zeros(1, self.n_embd, dtype=torch.float32, device=dev)
+        self._inj = [None] * self.n_layer
+        for m in self.moe:
+            m._init_decode_bufs(dev)
+
+    def _embed_body(self) -> None:
+        """Segment G0: token lookup -> hc_init (embedding broadcast over the
+        streams) written into the static residual."""
+        x = self.embed_tokens(self._ids)
+        self._res.copy_(x.unsqueeze(1).expand(1, self.hc_n, self.n_embd)
+                        .reshape(1, self.hc_dim))
+
+    def _moe_finish(self, il: int) -> torch.Tensor:
+        """Layer il's MoE: all-reduce the [k] expert accumulator (B[il]
+        replayed) and add the gated shared expert — computed from _ffn_in,
+        which still holds layer il's ffn input at this point (same order as
+        MoE.decode: reduce first, replicated shared added after)."""
+        y = self.tp.all_reduce(self.moe[il]._d["y"])
+        if self.moe[il].shared is not None:
+            y = y + self.moe[il]._shared_out(self._ffn_in)[0]
+        return y.view(1, -1)
+
+    def _layer_body(self, il: int):
+        """Segment A[il]; returns the router logits for the host routing step
+        (None is never produced on GPU — every layer has its MoE)."""
+        L = self.layers[il]
+        if il > 0:
+            hc_combine_(self._res, self._moe_finish(il - 1), self._inj[il - 1])
+        if self.ple is not None and il == self.ple_layer:
+            # the emb rows are gathered host-side in decode(); only the PLE
+            # math runs here, with the conv state written in place
+            out, self.ple_state, _ = self.ple.forward(
+                self._res, self._ple_emb, self.ple_state, inplace_state=True)
+            self._res.copy_(out)   # PLE.forward returns a new tensor: keep the address
+        mixed, inj, _ = L.mix_attn.forward(self._res)
+        if L.kind == "delta":
+            blk = self._delta_block(il, L, mixed, inplace=True)
+        else:
+            out, _, _ = L.qsa.decode(mixed, self._pos, self.qsa_cache[il])
+            blk = self.tp.all_reduce(out)
+        hc_combine_(self._res, blk, inj)
+        mixed2, inj2, _ = L.mix_ffn.forward(self._res)
+        self._ffn_in.copy_(mixed2)
+        self._inj[il] = inj2       # pool tensor: held here, read by A[il+1]
+        lg = self.moe[il]._logits(self._ffn_in)
+        self.moe[il]._d["y"].zero_()
+        return lg
+
+    def _final_body(self) -> torch.Tensor:
+        """Segment GF: last MoE reduce, exit mixer, vocab-split head: [1, n_vocab]."""
+        hc_combine_(self._res, self._moe_finish(self.n_layer - 1),
+                    self._inj[self.n_layer - 1])
+        mixed, _, _ = self.exit_mixer.forward(self._res)
+        return self.tp.all_gather(self.lm_head(mixed))
+
+    def _run_layers_eager(self) -> None:
+        """The driver of the graph, eager: A[il], the host routing step, then
+        one B[il] replay per resolve batch (identical bodies, no capture)."""
+        for il in range(self.n_layer):
+            lg = self._layer_body(il)
+            m = self.moe[il]
+            nb = m.decode_fill(*m.decode_route(lg))
+            for bi in range(nb):
+                m.decode_fill_batch(bi)
+                m.decode_body(self._ffn_in)
+
+    def _decode_eager(self) -> torch.Tensor:
+        self._embed_body()
+        self._run_layers_eager()
+        return self._final_body()[0]
+
+    def _decode_graph(self) -> torch.Tensor:
+        self._g0.replay()
+        for il in range(self.n_layer):
+            self._ga[il].replay()
+            m = self.moe[il]
+            nb = m.decode_fill(*m.decode_route(self._lg[il]))
+            for bi in range(nb):
+                m.decode_fill_batch(bi)
+                self._gb[il].replay()
+        self._gf.replay()
+        return self._graph_out[0]
+
+    def _capture(self) -> None:
+        """Warm the whole path twice eagerly on a side stream, then capture
+        G0 / A[il] / B[il] / GF. The warmups run real steps, so the states
+        they mutate (delta buffers in place, PLE conv state, the QSA static
+        `n`/rows with garbage tokens) are snapshotted before and restored
+        after — capture itself records without executing, and the garbage
+        rows sit behind the `idx_pos` sentinel / below `n` and get
+        recomputed before they could ever be scored."""
+        dev = self.tp.device
+        snap = {il: (c.clone(), s.clone())
+                for il, (c, s) in self.delta_cache.items()}
+        ple_snap = self.ple_state.clone() if self.ple_state is not None else None
+        n0 = (int(next(iter(self.qsa_cache.values()))["n"])
+              if self.qsa_cache else 0)
+        s = torch.xpu.Stream(dev)
+        s.wait_stream(torch.xpu.current_stream())
+        with torch.xpu.stream(s):
+            for _ in range(2):
+                self._decode_eager()
+            torch.xpu.current_stream().wait_stream(s)
+        torch.xpu.synchronize(dev)
+        self._g0 = torch.xpu.XPUGraph()
+        with torch.xpu.graph(self._g0):
+            self._embed_body()
+        self._ga = [torch.xpu.XPUGraph() for _ in range(self.n_layer)]
+        self._gb = [torch.xpu.XPUGraph() for _ in range(self.n_layer)]
+        self._lg = [None] * self.n_layer
+        for il in range(self.n_layer):
+            with torch.xpu.graph(self._ga[il]):
+                self._lg[il] = self._layer_body(il)
+            with torch.xpu.graph(self._gb[il]):
+                self.moe[il].decode_body(self._ffn_in)
+        self._gf = torch.xpu.XPUGraph()
+        with torch.xpu.graph(self._gf):
+            self._graph_out = self._final_body()
+        torch.xpu.synchronize(dev)
+        for il, (c, s_) in snap.items():
+            self.delta_cache[il][0].copy_(c)
+            self.delta_cache[il][1].copy_(s_)
+        if ple_snap is not None:
+            self.ple_state.copy_(ple_snap)
+        for state in self.qsa_cache.values():
+            state["n"].fill_(n0)
+            state["idx_pos"][n0:].fill_(1 << 60)
+
+    @torch.inference_mode()
+    def decode(self, token: int) -> torch.Tensor:
+        """One decode token -> logits [n_vocab]. Host-side work only: the PLE
+        n-gram rows (numpy hash + table gather into _ple_emb), then the
+        pinned token/pos pair, then graph replay or its eager twin."""
+        if self.n_past >= self.max_ctx:
+            raise ValueError(f"context full: {self.n_past} >= {self.max_ctx}")
+        self._init_decode()
+        if self.ple is not None:
+            idx = ple_row_indices([token], self._ple_hist, **self.ple_cfg)
+            emb = ple_gather_embedding(self.g, PLE_TABLE, idx, device=self.tp.device)
+            nheads = (self.ple_cfg["ngram"] - 1) * self.ple_cfg["heads_per_ngram"]
+            emb = emb.view(1, nheads, self.ple_dim).reshape(1, self.n_embd)
+            self._ple_emb.copy_(emb)
+            self._ple_hist = np.concatenate([self._ple_hist,
+                                             np.asarray([token], dtype=np.int64)])
+        self._host[0] = token
+        self._host[1] = self.n_past
+        self._dbuf.copy_(self._host, non_blocking=True)
+        self.n_past += 1
+        if self.use_graph:
+            if getattr(self, "_g0", None) is None:
+                self._capture()
+            return self._decode_graph()
+        return self._decode_eager()

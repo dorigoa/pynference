@@ -54,19 +54,25 @@ def _silu(x):
 
 
 # ------------------------------------------------------------- conv with state
-def conv_prefill(x, conv_state, w):
+def conv_prefill(x, conv_state, w, state_out=None):
     """Causal depthwise conv over a token chunk, then SiLU (vectorized).
 
     x:          [T, C]      per-token conv input (the qkv rows, post-projection)
     conv_state: [K-1, C]    the K-1 oldest rows, oldest first
     w:          [C, K]      taps per channel
+    state_out:  [K-1, C]    if given, the new state is written here in place
+                            instead of a fresh buffer (S27 graph decode: the
+                            state buffer must keep its address across steps)
     returns:    y [T, C] after SiLU, new_state [K-1, C] (the K-1 newest rows)
     """
     ins = torch.cat([conv_state, x], dim=0)              # [K-1+T, C]
     T, K = x.shape[0], w.shape[1]
     idx = torch.arange(T, device=x.device).unsqueeze(1) + torch.arange(K, device=x.device)
     y = (ins[idx] * w.t().unsqueeze(0)).sum(dim=1)       # y[t] = sum_i in[t+i] * w[i]
-    return _silu(y), ins[-(K - 1):].clone()
+    if state_out is None:
+        return _silu(y), ins[-(K - 1):].clone()
+    state_out.copy_(ins[-(K - 1):])
+    return _silu(y), state_out
 
 
 def conv_decode(x_new, conv_state, w):
@@ -99,27 +105,39 @@ def conv_ops_ref(x, conv_state, w):
 
 
 # ----------------------------------------------------- gated delta recurrence
-def delta_prefill(q, k, v, g, beta, state):
+def delta_prefill(q, k, v, g, beta, state, state_out=None):
     """Gated delta rule over a token chunk, vectorized over heads and state.
 
     q, k:       [T, H_k, S] post-conv, post-L2-norm
     v:          [T, H_v, S]
     g, beta:    [T, H_v]    log-decay (<= 0) and gate (in (0, 1))
     state:      [H_v, S, S] running M, natural layout state[h][i][j] = M[i][j]
+    state_out:  [H_v, S, S] if given, the recurrence runs in place on this
+                            buffer (its address must survive XPUGraph replay,
+                            S27); same numbers as the out-of-place chain
     returns:    out [T, H_v, S] (scaled by 1/sqrt(S)), new_state [H_v, S, S]
     """
     T, H_k, S = q.shape
     H_v = v.shape[1]
     scale = 1.0 / (S ** 0.5)
-    M = state.clone()
+    inplace = state_out is not None
+    M = state_out if inplace else state.clone()
     km = _key_map(H_v, H_k, q.device)
     kk = k[:, km]                                        # [T, H_v, S]
     qq = q[:, km]
     out = torch.empty_like(v)
     for t in range(T):
-        M = M * torch.exp(g[t]).view(-1, 1, 1)           # M *= exp(g)
+        e = torch.exp(g[t]).view(-1, 1, 1)               # M *= exp(g)
+        if inplace:
+            M.mul_(e)
+        else:
+            M = M * e
         delta = (v[t] - torch.einsum('hij,hi->hj', M, kk[t])) * beta[t].view(-1, 1)
-        M = M + kk[t].unsqueeze(2) * delta.unsqueeze(1)  # M[i][j] += k[i] * delta[j]
+        upd = kk[t].unsqueeze(2) * delta.unsqueeze(1)    # M[i][j] += k[i] * delta[j]
+        if inplace:
+            M.add_(upd)
+        else:
+            M = M + upd
         out[t] = torch.einsum('hij,hi->hj', M, qq[t]) * scale
     return out, M
 
@@ -323,6 +341,35 @@ def norm_gated_decode(y, z, w_norm, eps, out=None):
     out = torch.empty(H_v, S, dtype=torch.float32, device=y.device) if out is None else out
     _norm_gated_k[(H_v,)](y, z, w_norm, out, S, eps, z.stride(0),
                           BLOCK_S=_np2(S), num_warps=4)
+    return out
+
+
+@triton.jit
+def _norm_sigmoid_k(Y, Z, W, OUT, S, eps, stride_z, BLOCK_S: tl.constexpr):
+    """Per-head RMSNorm over S channels with weight, gated by plain sigmoid —
+    Flash-Next's gate (S24 chain: `sigmoid(z)`, not qwen35's `z*sigmoid(z)`);
+    one program per value head, `z` row-strided like `_norm_gated_k`."""
+    h = tl.program_id(0)
+    s = tl.arange(0, BLOCK_S)
+    m = s < S
+    y = tl.load(Y + h * S + s, mask=m, other=0.0)
+    z = tl.load(Z + h * stride_z + s, mask=m, other=0.0)
+    n = y * tl.rsqrt(tl.sum(y * y, 0) / S + eps) * tl.load(W + s, mask=m, other=0.0)
+    tl.store(OUT + h * S + s, n * tl.sigmoid(z), mask=m)
+
+
+def norm_sigmoid_decode(y, z, w_norm, eps, out=None):
+    """`norm(x)*w*sigmoid(z)` for one token, y/z [H_v, S] float32 — the
+    Flash-Next decode tail (norm, ssm_norm weight, plain sigmoid gate) fused
+    into one kernel. CPU takes the twin torch chain, so the CPU tests need no
+    Triton."""
+    H_v, S = y.shape
+    if torch.device(y.device).type != "xpu":
+        n = y * torch.rsqrt(y.pow(2).mean(-1, keepdim=True) + eps) * w_norm
+        return n * torch.sigmoid(z)
+    out = torch.empty(H_v, S, dtype=torch.float32, device=y.device) if out is None else out
+    _norm_sigmoid_k[(H_v,)](y, z, w_norm, out, S, eps, z.stride(0),
+                            BLOCK_S=_np2(S), num_warps=4)
     return out
 
 
