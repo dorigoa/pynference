@@ -16,11 +16,16 @@ QSA block (plan S25: every 4th layer, `blk.3` first) — the lightning indexer
 with 4:1 key pooling, the top-k cell selection and the gated GQA attention
 it masks.
 
-S26 adds the full model class (`Qwen4Exp`, plan S26 step 3): every dense
-weight (any qtype) is dequantized to FP32 at load time into F32QWeight on
-BOTH paths — prefill and decode then share one matmul, which is the safest
-way to keep C8 (prefill==decode bitwise) across six different qtypes. The
-MoE experts stay natively quantized in the ExpertStore (S26-1..S26-6);
+S26 adds the full model class (`Qwen4Exp`, plan S26 step 3). S27 step 2
+keeps every dense weight in its native GGUF quant instead of f32
+(`_wq` -> QLinear for Q8_0, NativeQWeight/gemv_native for Q6_K,
+HalfQWeight for BF16, F32QWeight for F32) and hands the freed VRAM to
+resident experts: decode takes the native GEMV, prefill the shared bf16
+scratch dequant, the same split the shared-expert trio has always used
+(C8 is checked against llama.cpp, not between the two paths). On CPU
+`_wq` keeps the FP32 dequant path (F32QWeight), which is what the chain/
+reference tests build against. The MoE experts stay natively quantized
+in the ExpertStore (S26-1..S26-6);
 the DeltaNet driver is the pure-torch chain verified against the dump in
 tests/cpu/test_qwen4exp_chain.py (no Triton kernels from deltanet.py).
 """
@@ -726,10 +731,11 @@ class Qwen4Exp:
     norm/conv metadata are replicated. all_reduce after every output
     projection; all_gather only on the logits.
 
-    Dense weights are all f32 (docstring header); experts stream from the
-    ExpertStore with the gpt-oss budget ladder (C5/C8): prefill==decode
-    bitwise because both use the same F32QWeight matmul for the dense stack
-    and the same indexed GEMV for experts.
+    Dense weights stay in their native quant (S27-2, `_wq`); experts
+    stream from the ExpertStore with the gpt-oss budget ladder (C5/C8).
+    Decode GEMV and prefill bf16 matmul differ only in accumulation
+    order, as they always did for the shared-expert trio; the margin is
+    checked against llama.cpp (C8), not between the paths.
     """
 
     # C5 floors, same rationale comments as models/gptoss.py (S17/S26):
@@ -831,14 +837,22 @@ class Qwen4Exp:
                 else ref_dequant(raw, qtype)
         return torch.from_numpy(np.array(w).reshape(n, k)).to(self.tp.device)
 
-    def _wq(self, name, *, runs=None, cols=None) -> F32QWeight:
-        """Dense weight -> F32QWeight [n, k] (dequantized at load; header
-        note). `runs` takes output-side rows — quant blocks are packed along
+    def _wq(self, name, *, runs=None, cols=None):
+        """Dense weight -> QWeight [n, k] kept in its native quant (S27-2):
+        make_qweight gives QLinear for Q8_0, NativeQWeight (gemv_native)
+        for Q6_K and friends, HalfQWeight for F16/BF16, F32QWeight for F32
+        — the shared-expert machinery, so decode is a native GEMV and
+        prefill dequantizes through the shared bf16 scratch. On CPU the
+        FP32 dequant path stays (F32QWeight): the chain/reference tests
+        build on CPU and bind `_dequant` to a stub expecting `.w` there.
+        `runs` takes output-side rows — quant blocks are packed along
         the input axis INSIDE each GGUF row, so output-row slicing needs no
         block alignment (verified: row-slice dequant == slice of full
-        dequant, S26-7 debug). `cols` byte-slices input-side blocks, so it
-        does (valid because every col run is type-block aligned: Q6_K 256,
-        Q8_0 32, and the parity runs are multiples of 128/256)."""
+        dequant, S26-7 debug), and the concatenated raw rows are a valid
+        native matrix. `cols` byte-slices input-side blocks, so it does
+        (valid because every col run is type-block aligned: Q6_K 256,
+        Q8_0 32, and the parity runs are multiples of 128/256), which again
+        leaves [n, row_bytes(qtype, k)] raw bytes."""
         t = self.g.tensors[name]
         K, N = t.shape                     # ggml order: (inputs, outputs)
         blk = TYPES[t.type].block
@@ -856,9 +870,13 @@ class Qwen4Exp:
         else:
             raw = np.array(self.g.raw(name))
             n, k = N, K
-        w = self._dequant(raw, t.type, n, k)
-        self._dense_bytes += w.numel() * 4
-        return F32QWeight(w, n, k)
+        if self.tp.device.type == "cpu":
+            w = self._dequant(raw, t.type, n, k)
+            self._dense_bytes += w.numel() * 4
+            return F32QWeight(w, n, k)
+        w = make_qweight(raw, t.type, n, k, self.tp.device)
+        self._dense_bytes += w.nbytes
+        return w
 
     def _f32(self, name, shape=None):
         t = self.g.tensors[name]
@@ -937,7 +955,7 @@ class Qwen4Exp:
                          cols=_head_rows(self.n_head, self.head_dim)),
                 self._f32(p + "attn_q_norm.weight"),
                 self._f32(p + "attn_k_norm.weight"),
-                self._wq(p + "indexer.q_proj.weight"),    # BF16 -> f32 here
+                self._wq(p + "indexer.q_proj.weight"),    # BF16 -> HalfQWeight
                 self._wq(p + "indexer.k_proj.weight"),
                 self._f32(p + "indexer.q_norm.weight"),
                 self._f32(p + "indexer.k_norm.weight"),
@@ -1132,7 +1150,8 @@ class Qwen4Exp:
 
     def embed_tokens(self, ids):
         local = (ids >= self.v0) & (ids < self.v1)
-        rows = self.embed.w[(ids - self.v0).clamp(0, self.v1 - self.v0 - 1)]
+        rows = self.embed.rows_dequant(
+            (ids - self.v0).clamp(0, self.v1 - self.v0 - 1))
         return self.tp.all_reduce(rows * local.unsqueeze(-1))
 
     def _ple_step(self, res, part, dev):
