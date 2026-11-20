@@ -1,0 +1,100 @@
+== start 23:58:29
+== pytest gpu exit 0 (00:02:15)
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+142 passed, 7 skipped, 1 warning in 224.29s (0:03:44)
+total 32
+drwxr-xr-x 7 alvise alvise 4096 Nov 20 11:42 .
+drwxr-xr-x 9 root   root   4096 Nov 14 11:29 ..
+drwxrwxr-x 2 alvise alvise 4096 Nov 20 11:23 gemma-4
+drwxrwxr-x 2 alvise alvise 4096 Nov 16 12:54 gpt-oss-120b
+drwxrwxr-x 2 alvise alvise 4096 Nov 20 09:09 qwen3.8
+drwxrwxr-x 4 alvise alvise 4096 Nov 14 19:46 ripple-65b
+drwxrwxr-x 3 alvise alvise 4096 Nov 14 22:56 ripple-65b-ac
+-rw-rw-r-- 1 alvise alvise 2653 Nov 14 17:16 ripple.jinja
+ls: cannot access '/nvme/gguf/gemma-4-31B/': No such file or directory
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme1n1p1  1.8T 1011G  730G  59% /nvme
+/nvme/gguf/gemma-4/gemma-4-31B-it-UD-Q4_K_XL.gguf
+/nvme/gguf/gemma-4/mtp-gemma-4-31B-it-Q4_0.gguf
+/nvme/gguf/gemma-4/gemma-4-31B-it-UD-Q8_K_XL.gguf
+/nvme/gguf/gemma-4/gemma-4-31B-it-Q8_0.gguf
+/nvme/gguf/gemma-4/mtp-gemma-4-31B-it-Q8_0.gguf
+/nvme/gguf/gemma-4/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf
+/nvme/gguf/gemma-4/gemma-4-31b.jinja
+== regress gemma4 exit 1 (00:02:15) (atteso 0)
+FAIL: missing model or golden files
+== q4 ours(graph) exit 0 (00:04:02)
+chat-it: 'We need to answer user\'s request in Italian: "Qual è la capitale d\'Italia? Rispo'
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman Emperor. This marked '
+== q4 diff strict exit 1 (00:04:02) (atteso 0)
+chat-it  same greedy tokens 2/24, max |dp| top-10 0.3785, mean partial KL 1.10e-01
+   ref:  'We need answer user\'s request in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase'
+   ours: 'We need to answer user\'s request in Italian: "Qual è la capitale d\'Italia? Rispondi in una'
+chat-en  same greedy tokens 24/24, max |dp| top-10 0.2261, mean partial KL 3.53e-02
+   ref:  'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+   ours: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+code     same greedy tokens 24/24, max |dp| top-10 0.1000, mean partial KL 9.48e-03
+   ref:  '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+   ours: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+raw      same greedy tokens 13/24, max |dp| top-10 0.0658, mean partial KL 6.11e-03
+   ref:  ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+   ours: ' Octavian, later known as Augustus, became the first Roman Emperor. This marked the transition from '
+C8 FAIL: chat-it: greedy diverges at step 2 but the reference gap is 0.715 >= 0.15 (not a near-tie)
+C8 FAIL: chat-it: mean partial KL 1.10e-01 > 0.01
+C8 FAIL: chat-en: mean partial KL 3.53e-02 > 0.01
+C8 FAIL: greedy-identical prompts: 2/4, 3 required
+C8 strict: FAIL
+== q4 ppl exit 0 (00:05:53) (atteso 0)
+Final estimate: PPL = 1.0003 +/- 0.00015  (2040 scored tokens, 84.5s)
+RES ppl ours 1.0003 ref 1.0002 rel 0.010% (limit 1%)
+== q4 pplcmp exit 0 (00:05:53) (atteso 0)
+== regress qwen4exp r1 exit 1 (00:09:37) (atteso 0)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 8.90e-03 over top-10
+raw: max |dp| 1.15e-02 over top-10
+ppl: baseline 1.0005, now 1.0005, rel diff 0.000%
+FAIL: chat-it: top-10 ids differ at step 1
+FAIL: chat-en: top-10 ids differ at step 1
+FAIL: code: top-10 ids differ at step 2
+FAIL: code: max |dp| 8.90e-03 > 1e-3
+FAIL: raw: top-10 ids differ at step 2
+FAIL: raw: max |dp| 1.15e-02 > 1e-3
+FAIL
+== goss ours(fused) exit 0 (00:11:08)
+chat-it: 'analysisThe user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in una '
+chat-en: 'analysisWe need to write a haiku about the sea. Haiku is 5-7-5 syll'
+code: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, '
+raw: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years,'
+== goss diff strict exit 0 (00:11:08) (atteso 0)
+chat-it  same greedy tokens 24/24, max |dp| top-10 0.0484, mean partial KL 4.60e-04
+   ref:  '<|channel|>analysis<|message|>The user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in un'
+   ours: 'analysisThe user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase'
+chat-en  same greedy tokens 24/24, max |dp| top-10 0.0206, mean partial KL 5.48e-04
+   ref:  '<|channel|>analysis<|message|>We need to write a haiku about the sea. Haiku is 5-7-5 syll'
+   ours: 'analysisWe need to write a haiku about the sea. Haiku is 5-7-5 syll'
+code     same greedy tokens 24/24, max |dp| top-10 0.0308, mean partial KL 2.19e-04
+   ref:  '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+   ours: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+raw      same greedy tokens 24/24, max |dp| top-10 0.0265, mean partial KL 2.30e-03
+   ref:  ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+   ours: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+C8 strict: PASS
+== goss ppl exit 0 (00:11:50) (atteso 0)
+Final estimate: PPL = 1.6095 +/- 0.04047  (2040 scored tokens, 28.7s)
+RES ppl ours 1.6095 ref 1.5995 rel 0.625% (limit 1%)
+== goss pplcmp exit 0 (00:11:50) (atteso 0, limite 1%)
+== goss: gate verde → re-baseline golden al regime RAM nuova (regola S26-5→S26-6)
+== goss rebase exit 0 (00:11:50)
+== regress gpt-oss exit 0 (00:13:03) (atteso 0)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 0.00e+00 over top-10
+ppl: baseline 1.6095, now 1.6095, rel diff 0.000%
+PASS
+PASS
+== summary: gpu=0 gemma4=1 q4gate=1 q4regress=1 gossgate=0 gossregress=0
+== end 00:13:03
