@@ -148,3 +148,36 @@ def test_store_pinned_ring_bounded(tp):
         got = st.bufs[0][name][slot].reshape(-1)
         torch.xpu.synchronize()  # the side-stream copies must have landed
         assert torch.equal(got.cpu(), want)
+
+
+def test_host_cache_rows_copy_exact(tp):
+    """S27-3: when the host allowance covers the whole non-resident set,
+    the store page-locks and fills the pools at load (host cache ON), swap
+    misses copy straight from the pinned rows, and the staging ring is
+    never allocated."""
+    t = _triple_bytes()
+    st = ExpertStore(_groups(), tp, 4 * t, swap_slots=4, host_pin_bytes=8 * t)
+    assert st.host_cache
+    assert st.pinned_bytes() == 8 * t  # all 8 experts are pool rows already
+    assert all(p.allocated_bytes == p.nbytes for p in st.pools.values())
+    gate = st.pools[0, "gate"]
+    assert torch.equal(gate.cached_row(4),
+                       torch.from_numpy(st.layers[0]["gate"].expert_bytes(4)))
+    slots = [st.resolve(0, [e]).tolist()[0] for e in (4, 5, 6, 7)]
+    assert st._ring is None  # host cache path: no ring staging at all
+    torch.xpu.synchronize()
+    for e, slot in zip((4, 5, 6, 7), slots):
+        for name in ("gate", "up", "down"):
+            want = torch.from_numpy(st.layers[0][name].expert_bytes(e))
+            got = st.bufs[0][name][slot].reshape(-1)
+            assert torch.equal(got.cpu(), want), (name, e)
+
+
+def test_host_cache_off_below_allowance(tp):
+    """A too-small allowance keeps the S17 ring behavior: pools untouched,
+    misses staged through the ring."""
+    st = ExpertStore(_groups(), tp, 0, swap_slots=2, host_pin_bytes=1)
+    assert not st.host_cache
+    st.resolve(0, [5])
+    assert st._ring is not None
+    assert all(p.allocated_bytes == 0 for p in st.pools.values())

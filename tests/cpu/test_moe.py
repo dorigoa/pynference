@@ -150,6 +150,35 @@ def test_host_pool_lazy_pins_rows_on_demand():
     assert HostPool(g, [1, 3, 5]).buf is not None
 
 
+def test_host_pool_rows_stay_cached():
+    # S27-3 host cache: a loaded row is a cache entry (weights are
+    # read-only), not a re-read view of the source, and cached_row is the
+    # store's miss-path lookup.
+    g = _group(n_experts=6)
+    want = np.array(g.raw_fn(1), dtype=np.uint8)
+    pool = HostPool(g, [1, 3], lazy=True)
+    assert pool.cached_row(1) is None and pool.buf is None
+    assert pool.row_bytes(1).numpy().tolist() == want.tolist()
+    assert pool.cached_row(1) is not None
+    g.raw_fn = lambda e: np.zeros_like(want)      # source "changed" below
+    assert pool.cached_row(1).numpy().tolist() == want.tolist()
+    assert pool.row_bytes(1).numpy().tolist() == want.tolist()  # no reload
+    assert pool.cached_row(3) is None             # other rows untouched
+    pool.fill()                                   # host-cache load at store init
+    assert pool.cached_row(3) is not None
+    assert pool.cached_row(3).numpy().tolist() == np.zeros_like(want).tolist()
+    assert all(pool.cached_row(e) is not None for e in pool.ids)
+
+
+def test_host_pool_fill_marks_eager_buf():
+    # eager pools start with zeros (visible unloaded rows) and fill marks all
+    g = _group(n_experts=4)
+    pool = HostPool(g, [0, 2])
+    assert pool.cached_row(0) is None             # buf exists, rows unloaded
+    pool.fill()
+    assert pool.cached_row(0).numpy().tolist() == list(g.raw_fn(0))
+
+
 def test_host_pool_accepts_2d_raw_fn():
     # quant.testing.make_test_blocks returns [n, row_bytes]; expert_bytes
     # flattens it, so fill keeps the pool view 2D (S15-1 crashed on GPU).

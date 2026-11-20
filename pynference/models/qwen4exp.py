@@ -740,7 +740,8 @@ class Qwen4Exp:
 
     # C5 floors, same rationale comments as models/gptoss.py (S17/S26):
     # oneCCL + graph scratch live above the store; the host reserve keeps
-    # page-cache-free RAM for the OS because the store's pinned ring is
+    # page-cache-free RAM for the OS because the store's pinned ring (and
+    # the S27-3 pinned host cache sized by `_host_pin_bytes`) is
     # non-reclaimable.
     EXPERT_BUDGET_MIN_GB = 8.0
     EXPERT_GPU_OVERHEAD_BYTES = 11 << 30
@@ -1023,7 +1024,16 @@ class Qwen4Exp:
     def _expert_budget(self, dense, kv, scratch, host_total=None):
         """Expert-store budget: the model must fit with a floor above it
         (EXPERT_BUDGET_MIN_GB); caps: per-rank D8 device budget, host RAM
-        reserve (world-shared), and the live device total minus overhead."""
+        reserve (world-shared), and the live device total minus overhead.
+
+        S27-3 (measured): with native dense weights the live-device cap
+        binds — 34.3e9 total - EXPERT_GPU_OVERHEAD_BYTES - 2.68e9 dense -
+        0.34e9 kv - 1.07e9 scratch = 18.4e9 (store allocated 18.38 GB, no
+        OOM through decode). The host cap is (121.5 GiB - 16 GiB) / 2
+        - dense - kv - scratch ~ 52e9 and no longer binds since the PC
+        grew its RAM on 2026-11-19; the overhead's real cost measured
+        GPUActive <= 13.7 GiB and one OOM-free graph-less run, so 11 GiB
+        stays for now (step 4 graphs will want it)."""
         plan = max(int(D8_BUDGET_GB[self.tp.rank] * 1e9) - dense - kv - scratch, 0)
         if host_total is None and torch.xpu.device_count() > 0:
             host_total = read_mem_total_bytes()
@@ -1042,17 +1052,36 @@ class Qwen4Exp:
         cap = max(total - self.EXPERT_GPU_OVERHEAD_BYTES - dense - kv - scratch, 0)
         return min(plan, cap)
 
-    def _expert_store(self, groups, tp, budget):
-        from ..moe import ExpertStore  # lazy import (module header note)
-        return ExpertStore(groups, tp, budget, verbose=True)
+    def _host_pin_bytes(self, dense, kv, scratch, budget, host_total=None):
+        """S27-3: RAM safe to page-lock for the non-resident experts (the
+        store's host cache, so a swap miss never reads the disk). The xe
+        driver holds host RAM for device memory too (S26: GPUActive tracked
+        the reservations), so the store's full device budget is counted
+        against the host side, once per rank, plus dense/kv/scratch and the
+        EXPERT_HOST_RESERVE_BYTES floor for the OS. ExpertStore still only
+        pins when the whole non-resident set fits, and moe.PINNED_LIMIT_BYTES
+        caps it globally."""
+        if host_total is None:
+            host_total = read_mem_total_bytes() if torch.xpu.device_count() else -1
+        if host_total <= 0:
+            return 0
+        return max(host_total - self.EXPERT_HOST_RESERVE_BYTES
+                   - self.tp.world * (dense + kv + scratch + budget), 0)
 
-    def _expert_store_ladder(self, groups, tp, budget):
+    def _expert_store(self, groups, tp, budget, host_pin_bytes=0):
+        from ..moe import ExpertStore  # lazy import (module header note)
+        return ExpertStore(groups, tp, budget, verbose=True,
+                           host_pin_bytes=host_pin_bytes)
+
+    def _expert_store_ladder(self, groups, tp, budget, host_pin_bytes=0):
         """Retry the store at 90% budget on OOM down to the floor (gpt-oss
-        S17 recipe, unchanged)."""
+        S17 recipe, unchanged; the host pin allowance rides along — it is a
+        RAM budget, not a device one, so shrinking the device budget does
+        not change it)."""
         b, floor = budget, int(self.EXPERT_BUDGET_MIN_GB * 1e9)
         while b >= floor:
             try:
-                return self._expert_store(groups, tp, b)
+                return self._expert_store(groups, tp, b, host_pin_bytes)
             except torch.OutOfMemoryError:
                 gc.collect()
                 if torch.device(tp.device).type == "xpu":
@@ -1087,13 +1116,16 @@ class Qwen4Exp:
         dense = self._dense_bytes + tiny
         kv, scratch = self.kv_bytes(), 1 << 30
         budget = self._expert_budget(dense, kv, scratch)
+        host_pin = self._host_pin_bytes(dense, kv, scratch, budget)
         self._weights_bytes, self._scratch_bytes = dense, scratch
         if self.tp.is_main:
             print(f"  MoE: {int(self.g.get('expert_count'))} experts x "
                   f"{self.n_layer} layers, budget {budget / 1e9:.2f} GB "
                   f"(dense {dense / 1e9:.2f}, kv {kv / 1e9:.2f}, "
-                  f"scratch {scratch / 1e9:.2f})", flush=True)
-        self.store = self._expert_store_ladder(groups, self.tp, budget)
+                  f"scratch {scratch / 1e9:.2f}, "
+                  f"host pin {host_pin / 1e9:.2f} GB)", flush=True)
+        self.store = self._expert_store_ladder(groups, self.tp, budget,
+                                               host_pin)
         self.moe = [moe_layer(self.g, self.store, il, dev)
                     for il in range(self.n_layer)]
         if self.tp.is_main:

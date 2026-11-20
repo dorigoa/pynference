@@ -151,3 +151,30 @@ def test_wq_tp2_parity_runs_load_and_match():
         full = torch.from_numpy(ref_dequant(np.array(g.rows(name, 0, N)), t.type))
         want = torch.cat([full[a:a + l] for a, l in rr])
         assert torch.equal(w.w, want)
+
+
+def test_host_pin_bytes_sizing():
+    """S27-3: the page-lock allowance for the store's host cache is
+    MemTotal minus EXPERT_HOST_RESERVE_BYTES minus every rank's device
+    footprint (dense+kv+scratch+store budget, conservatively mirrored on
+    the host), clamped at 0; no MemTotal -> 0 -> ring staging as before."""
+    from types import SimpleNamespace
+
+    from pynference.models.qwen4exp import Qwen4Exp
+
+    stub = SimpleNamespace(tp=SimpleNamespace(world=2),
+                           EXPERT_HOST_RESERVE_BYTES=Qwen4Exp.EXPERT_HOST_RESERVE_BYTES)
+    dense, kv, scratch = 2_680_000_000, 340_000_000, 1_070_000_000
+    budget = 18_360_000_000          # the live-device cap S27-3 measured
+
+    def hp(total):
+        return Qwen4Exp._host_pin_bytes(stub, dense, kv, scratch, budget,
+                                        host_total=total)
+
+    host = 121 * (1 << 30) + 512 * (1 << 20)      # the PC since 2026-11-19
+    want = (host - Qwen4Exp.EXPERT_HOST_RESERVE_BYTES
+            - 2 * (dense + kv + scratch + budget))
+    assert hp(host) == want
+    assert want > 12 * (1 << 30)                  # the ~12.5 GB pin fits
+    assert hp(40 << 30) == 0                      # tight host -> no pin
+    assert hp(-1) == 0                            # no /proc/meminfo (tests)

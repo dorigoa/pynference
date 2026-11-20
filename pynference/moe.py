@@ -12,7 +12,10 @@ swap slots; non-resident experts are read straight from the (read-only,
 reclaimable) GGUF at swap time and staged to the GPU through a small pinned
 ring (`ring_slots` slot-sized buffers, S17 job S17-6), so page-locked host
 RAM stays tens of MB per rank instead of the whole swap set — weights are
-read-only, so eviction needs no write-back.
+read-only, so eviction needs no write-back. On a roomy host (S27-3, PC with
+121.5 GiB RAM) `host_pin_bytes` lets the store instead page-lock the whole
+non-resident set at load and serve misses straight from it, so a miss never
+reads the disk.
 """
 from __future__ import annotations
 
@@ -214,11 +217,14 @@ class HostPool:
     time — on a 62 GB host that is what fed the kernel's global OOM killer
     during the gpt-oss load; a lazy pool only pins what inference touches).
 
-    Since job S17-6 the store itself no longer pins pools at all: swap
-    misses go through `ExpertStore`'s bounded pinned ring, so the driver
-    never holds a whole pool's worth of locked RAM either. Pools remain as
-    the per-group row API (used by eager fills and tests) and for the C5
-    worst-case pinned plan (`pinned_planned_bytes`).
+    Since job S17-6 the store pins pools only when the host allows it
+    (`ExpertStore(..., host_pin_bytes=...)`, S27-3): with the new 121.5 GiB
+    PC RAM the whole non-resident expert set fits page-locked, and swap
+    misses then copy straight from the pinned row — no GGUF read, no ring
+    staging. Without that allowance the store leaves pools lazy and stages
+    misses through its bounded pinned ring, so the driver never holds a
+    whole pool's worth of locked RAM. Rows load once and stay cached
+    (weights are read-only), so a loaded row is a host cache entry.
     """
 
     def __init__(self, group: ExpertGroup, ids: list[int], pin: bool = True,
@@ -227,6 +233,7 @@ class HostPool:
         self.ids = list(ids)
         self.row = {e: i for i, e in enumerate(self.ids)}
         self._pin = pin
+        self._loaded = bytearray(len(self.ids))
         self.buf = None if lazy else self._new_buf()
 
     def _new_buf(self) -> torch.Tensor:
@@ -256,13 +263,27 @@ class HostPool:
             data = np.stack([self.group.expert_bytes(e) for e in self.ids])
             self.buf.view(len(self.ids), self.group.slot_bytes).copy_(
                 torch.from_numpy(data))
+            self._loaded[:] = b"\x01" * len(self.ids)
+
+    def _row(self, e: int) -> torch.Tensor:
+        self._ensure()
+        return self.buf.view(-1, self.group.slot_bytes)[self.row[e]]
 
     def row_bytes(self, e: int) -> torch.Tensor:
-        """Host row of expert e, allocated and loaded on demand (lazy pools)."""
-        self._ensure()
-        row = self.buf.view(-1, self.group.slot_bytes)[self.row[e]]
-        row.copy_(torch.from_numpy(self.group.expert_bytes(e)))
-        return row
+        """Host row of expert e; loads from the source on first touch and
+        stays cached after (S27-3: with the host cache on, the store copies
+        swap misses from these rows, so reloading would be wasted work)."""
+        r = self.row[e]
+        if not self._loaded[r]:
+            self._row(e).copy_(torch.from_numpy(self.group.expert_bytes(e)))
+            self._loaded[r] = 1
+        return self._row(e)
+
+    def cached_row(self, e: int):
+        """Loaded row for expert e, or None (S27-3 host-cache lookup)."""
+        if self.buf is not None and self._loaded[self.row[e]]:
+            return self._row(e)
+        return None
 
 
 # ------------------------------------------------------------- routing / activation
@@ -371,10 +392,17 @@ class ExpertStore:
     a side stream and makes the current stream wait on the copy event, so
     kernels launched after it see fresh bytes; `stats()` reports hits,
     misses and copied bytes.
+
+    `host_pin_bytes` (S27-3): when the host has that much RAM to spare, the
+    store fills every non-resident pool at load (`pinned_planned_bytes() <=
+    host_pin_bytes`) and swap misses copy straight from the pinned rows —
+    the GGUF is read once at load, never during decode. Otherwise the pools
+    stay lazy and misses go through the ring, as before.
     """
 
     def __init__(self, g, tp, budget_bytes: int, swap_slots: int = 2,
-                 verbose: bool = False, ring_slots: int = 4):
+                 verbose: bool = False, ring_slots: int = 4,
+                 host_pin_bytes: int = 0):
         groups = list(getattr(g, "groups", g))
         if not groups:
             raise ValueError("ExpertStore: no expert groups")
@@ -451,6 +479,24 @@ class ExpertStore:
         if pinned > PINNED_LIMIT_BYTES:
             raise ValueError(f"pinned RAM {pinned} B exceeds the C5 limit {PINNED_LIMIT_BYTES}")
         self._pinned = pinned
+        # S27-3 host cache: with the new RAM (PC has 121.5 GiB since
+        # 2026-11-19) the whole non-resident set fits page-locked on a
+        # roomy host, and a swap miss never touches the disk. Fill once,
+        # here: rows are read-only and never rewritten (weights are
+        # immutable), so they are safe non-blocking H2D sources forever.
+        self.host_cache = False
+        if host_pin_bytes > 0 and 0 < pinned <= host_pin_bytes:
+            for pool in self.pools.values():
+                pool.fill()
+            self.host_cache = True
+            if verbose:
+                print(f"  store: host cache ON, {pinned / 1e9:.2f} GB of "
+                      f"non-resident experts pinned "
+                      f"(allowance {host_pin_bytes / 1e9:.2f} GB)", flush=True)
+        elif host_pin_bytes > 0 and verbose:
+            print(f"  store: host cache OFF, {pinned / 1e9:.2f} GB > "
+                  f"allowance {host_pin_bytes / 1e9:.2f} GB (ring staging)",
+                  flush=True)
         self._side = torch.xpu.Stream(tp.device)
         self._ev = torch.xpu.Event()
         # Pinned staging ring (S17, job S17-6): swap misses fill these few
@@ -502,6 +548,18 @@ class ExpertStore:
         cur = torch.xpu.current_stream()
         # the side stream must not overwrite a slot a queued kernel may read
         self._side.wait_stream(cur)
+        if self.host_cache:
+            # S27-3: rows are pinned by the load-time fill and never
+            # rewritten, so the pool row is a direct non-blocking H2D
+            # source — no ring staging, no GGUF read during decode.
+            with torch.xpu.stream(self._side):
+                for e, slot in misses:
+                    for name, buf in self.bufs[layer].items():
+                        row = self.pools[layer, name].row_bytes(e)
+                        buf[slot].reshape(-1).copy_(row, non_blocking=True)
+                self._ev.record(self._side)
+            cur.wait_event(self._ev)
+            return
         self._ensure_ring()
         with torch.xpu.stream(self._side):
             for e, slot in misses:
@@ -533,8 +591,8 @@ class ExpertStore:
 
     def pinned_bytes(self) -> int:
         """Host bytes page-locked so far: the staging ring (the store's only
-        pinned memory since job S17-6) plus any pool buffer pinned through
-        the pool's own row API."""
+        pinned memory without a host cache, job S17-6) plus the pool buffers
+        filled for the S27-3 host cache (or touched through the row API)."""
         ring = 0 if self._ring is None else sum(b.numel() for b in self._ring)
         return ring + sum(p.allocated_bytes for p in self.pools.values())
 
