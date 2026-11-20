@@ -690,10 +690,20 @@ class QSA:
         k = min(pool_cap, self.n_top_pool)
         top = score.topk(k).indices
         bcells = top[:, None] * cp + torch.arange(cp, device=dev)
-        ok = vis[top][:, None] & (bcells < n_new)
+        # `vis` is never indexed with a tensor here: torch's bool advanced
+        # indexing (`vis[top]`, `vis[nb]`) enqueues an XPU kernel that
+        # Level Zero refuses to record into a graph (UR error 44,
+        # UNSUPPORTED_FEATURE — S27-6 crashed at `vis[nb]`, right after
+        # `topk` and `vis[top]` had captured fine; `topk` itself is
+        # capturable). `vis` is (last <= p0) & (arange < n_pool), so both
+        # lookups are rebuilt from int64 gathers and comparisons — same
+        # values, only capture-friendly ops.
+        ok = ((last.gather(0, top) <= p0) & (top < n_pool))[:, None] \
+            & (bcells < n_new)
         head = torch.where(ok, bcells, torch.full_like(bcells, -1)).reshape(-1)
         tail = nb * cp + torch.arange(cp, device=dev)                 # the incomplete last block
-        ok_tail = (tail < n_new) & (~vis[nb].view(1)) \
+        nb_vis = (last.gather(0, nb.view(1)) <= p0) & (nb < n_pool)
+        ok_tail = (tail < n_new) & (~nb_vis) \
             & (state["idx_pos"][torch.minimum(tail, n)] <= p0)
         idx = torch.cat([head, torch.where(ok_tail, tail, torch.full_like(tail, -1))]) \
             .to(torch.int32)
