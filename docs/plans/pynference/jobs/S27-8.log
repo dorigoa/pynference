@@ -1,0 +1,52 @@
+== start 23:27:46
+== pytest gpu exit 0 (23:31:30)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+142 passed, 7 skipped, 1 warning in 223.02s (0:03:43)
+== regress qwen4exp exit 1 (23:35:08) (atteso 0)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 1.66e-02 over top-10
+raw: max |dp| 2.02e-02 over top-10
+ppl: baseline 1.0002, now 1.0004, rel diff 0.020%
+FAIL: chat-it: top-10 ids differ at step 0
+FAIL: chat-en: top-10 ids differ at step 0
+FAIL: code: top-10 ids differ at step 2
+FAIL: code: max |dp| 1.66e-02 > 1e-3
+FAIL: raw: top-10 ids differ at step 2
+FAIL: raw: max |dp| 2.02e-02 > 1e-3
+FAIL
+== regress gemma4 exit 1 (23:35:08) (atteso 0)
+FAIL: missing model or golden files
+== regress gpt-oss-120b exit 1 (23:37:21) (atteso 0)
+chat-it: max |dp| 2.36e-05 over top-10
+chat-en: max |dp| 1.45e-04 over top-10
+code: max |dp| 1.22e-04 over top-10
+raw: max |dp| 1.11e-04 over top-10
+ppl: baseline 1.6095, now 1.6066, rel diff 0.180%
+FAIL: ppl rel diff 0.180% > 0.1%
+FAIL
+floor MemAvailable 100.06 GiB, max GPUActive 14.84 GiB
+== graph60 exit 0 (23:39:55)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+[r0] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r1] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r0] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.01G torch_res=22.07G[r1] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.01G torch_res=22.07G
+[graph] prefill 41 tokens: 49.617 ms/token (20 token/s)
+[graph] wall time per token: 105.8 ms (9.45 tok/s)
+store: hits 9334 misses 5095 copied 11.72 GiB; resident 7278/7374 slots
+floor MemAvailable 74.76 GiB, max GPUActive 39.45 GiB
+== graph2000 exit 0 (23:42:34)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+[r0] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r1] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r0] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.67G torch_res=23.53G
+[r1] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.67G torch_res=23.51G
+[graph] prefill 2000 tokens: 15.093 ms/token (66 token/s)
+[graph] wall time per token: 111.8 ms (8.94 tok/s)
+store: hits 27977 misses 20153 copied 46.78 GiB; resident 7278/7374 slots
+floor MemAvailable 69.97 GiB, max GPUActive 44.09 GiB
+== summary: gpu=0 q4exp=1 gemma4=1 gptoss=1 graph60=0 graph2000=0
+== end 23:42:34
