@@ -1,0 +1,36 @@
+== start 21:03:55
+== ours exit 0 (21:05:39)
+  qwen4exp: load done in 9.3s
+chat-it: 'We need answer user in Italian: "Qual è la capitale d\'Italia? Rispondi in una fr'
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman emperor, marking the '
+== diff strict exit 0 (21:05:39) (atteso 0)
+chat-it  same greedy tokens 4/24, max |dp| top-10 0.1002, mean partial KL 6.31e-03
+   ref:  'We need answer user\'s request in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase'
+   ours: 'We need answer user in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase." Need'
+chat-en  same greedy tokens 24/24, max |dp| top-10 0.1007, mean partial KL 4.27e-03
+   ref:  'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+   ours: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+code     same greedy tokens 24/24, max |dp| top-10 0.0321, mean partial KL 7.67e-04
+   ref:  '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+   ours: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+raw      same greedy tokens 24/24, max |dp| top-10 0.0297, mean partial KL 1.76e-03
+   ref:  ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+   ours: ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+C8 strict: PASS
+== ppl exit 0 (21:07:15) (atteso 0)
+Final estimate: PPL = 1.0005 +/- 0.00026  (2040 scored tokens, 82.7s)
+RES ppl ours 1.0005 ref 1.0002 rel 0.030% (limit 1%)
+== ppl compare exit 0 (21:07:15)
+== regress qwen4exp exit 0 (21:10:37)
+Final estimate: PPL = 1.0005 +/- 0.00026  (2040 scored tokens, 83.0s)
+chat-it: max |dp| 1.16e-06 over top-10
+chat-en: max |dp| 1.55e-06 over top-10
+code: max |dp| 8.61e-07 over top-10
+raw: max |dp| 9.48e-07 over top-10
+ppl: baseline 1.0005, now 1.0005, rel diff 0.000%
+PASS
+PASS
+== summary: ours=0 diff=0 ppl=0 pplcmp=0 boot=0 regressqwen4exp=0
+== end 21:10:37
