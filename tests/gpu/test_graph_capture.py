@@ -45,7 +45,7 @@ def _select_inputs(pool_cap, cp, cp_dim, k, seed=0):
     keys = torch.randn(pool_cap * cp + cp, cp_dim, generator=g).to(DEV)
     pos = torch.arange(pool_cap * cp + cp, dtype=torch.int64, device=DEV)
     pool = torch.zeros(pool_cap, cp_dim, device=DEV)
-    score = torch.randn(pool_cap, device=DEV, generator=g)
+    score = torch.randn(pool_cap, generator=g).to(DEV)
     return dict(keys=keys, pos=pos, pool=pool, score=score,
                 pos0=torch.tensor(n - 1, dtype=torch.int64, device=DEV),
                 n=torch.tensor(n, dtype=torch.int64, device=DEV),
