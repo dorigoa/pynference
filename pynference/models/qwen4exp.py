@@ -1559,18 +1559,30 @@ class Qwen4Exp:
 
     def _capture(self) -> None:
         """Warm the whole path twice eagerly on a side stream, then capture
-        G0 / A[il] / B[il] / GF. The warmups run real steps, so the states
-        they mutate (delta buffers in place, PLE conv state, the QSA static
-        `n`/rows with garbage tokens) are snapshotted before and restored
-        after — capture itself records without executing, and the garbage
-        rows sit behind the `idx_pos` sentinel / below `n` and get
-        recomputed before they could ever be scored."""
+        G0 / A[il] / B[il] / GF. The warmups run real steps, so every state
+        they mutate is snapshotted before and restored after: delta buffers
+        in place, PLE conv state, and the QSA static `n` plus the exact
+        rows the two steps write (`idx_keys`/`kv_k`/`kv_v` at `n0`,`n0+1`;
+        the `pool` rows they fold; `idx_pos` back to the sentinel). Capture
+        itself records without executing. Restoring the garbage rows
+        wholesale — instead of trusting the read-side masks to hide them
+        from the first replay step — keeps the warmup fully invisible."""
         dev = self.tp.device
         snap = {il: (c.clone(), s.clone())
                 for il, (c, s) in self.delta_cache.items()}
         ple_snap = self.ple_state.clone() if self.ple_state is not None else None
         n0 = (int(next(iter(self.qsa_cache.values()))["n"])
               if self.qsa_cache else 0)
+        qsa_snap = []
+        for il, st in self.qsa_cache.items():
+            cp = self.layers[il].qsa.compress
+            rw = [r for r in (n0, n0 + 1) if r < st["idx_pos"].shape[0]]
+            nb = sorted({r for r in (n0 // cp, (n0 + 1) // cp)
+                         if r < st["pool"].shape[0]})
+            qsa_snap.append((st, rw, nb,
+                             {k: st[k][rw].clone()
+                              for k in ("idx_keys", "kv_k", "kv_v")},
+                             st["pool"][nb].clone()))
         s = torch.xpu.Stream(dev)
         s.wait_stream(torch.xpu.current_stream())
         with torch.xpu.stream(s):
@@ -1598,9 +1610,12 @@ class Qwen4Exp:
             self.delta_cache[il][1].copy_(s_)
         if ple_snap is not None:
             self.ple_state.copy_(ple_snap)
-        for state in self.qsa_cache.values():
-            state["n"].fill_(n0)
-            state["idx_pos"][n0:].fill_(1 << 60)
+        for st, rw, nb, srows, spool in qsa_snap:
+            st["n"].fill_(n0)
+            st["idx_pos"][n0:].fill_(1 << 60)
+            for k, v in srows.items():
+                st[k][rw] = v
+            st["pool"][nb] = spool
 
     @torch.inference_mode()
     def decode(self, token: int) -> torch.Tensor:

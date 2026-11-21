@@ -1,0 +1,44 @@
+== start 01:34:52
+== ab exit 0 (01:36:54) (atteso 0)
+  dev_bytes = torch.from_numpy(np.ascontiguousarray(raw)).to(device)
+    7386 of 12288 local experts resident, 96 swap slots, store 18.38 GB, pinned 12.04 GB
+  qwen4exp: load done in 27.1s
+layers: {'delta': (36, 0, 46), 'qsa': (12, 3, 47)}
+qsa cp=4 idx_dim=128 n_head_kv=1 head_dim=256 top_pool=512
+delta n_value_l=24 ssm=128 conv_k=4 qkv_l=5120 ple=True
+graph chat-it: done, greedy [1596, 1144, 4087, 1156, 303]
+graph chat-en: done, greedy [1596, 1144, 310, 5707, 310]
+graph code: done, greedy [262, 413, 307, 361, 220]
+graph raw: done, greedy [4756, 57177, 11, 2843, 3750]
+fused chat-it: done, greedy [1596, 1144, 4087, 1156, 303]
+fused chat-en: done, greedy [1596, 1144, 310, 5707, 310]
+fused code: done, greedy [262, 413, 307, 361, 220]
+fused raw: done, greedy [4756, 57177, 11, 2843, 3750]
+== diff exit 0 (01:36:54)
+chat-en step p: res max|d| 8.541e-01; ffn_in max|d| 9.343e-01; injL max|d| 3.988e-01
+chat-en step 0: top_id 46 elems differ, greedy 1144 vs 1144; top_p max|d| 2.293e-04; q0_idx_keys max|d| 3.146e+00; q0_kv_k max|d| 3.462e+00; q0_kv_v max|d| 1.985e+00; qL_pool max|d| 2.165e-01; qL_idx_keys max|d| 5.664e+00; qL_kv_k max|d| 1.197e+01 (+6)
+chat-en step 1: top_id 48 elems differ, greedy 310 vs 310; top_p max|d| 2.430e-02; qL_pool max|d| 3.538e-01; qL_idx_keys max|d| 9.854e-01; qL_kv_k max|d| 1.291e+00; qL_kv_v max|d| 6.866e-01; dL_conv max|d| 2.082e+00; dL_state max|d| 3.102e-02 (+3)
+chat-en step 2: top_id 44 elems differ, greedy 5707 vs 5707; top_p max|d| 9.790e-02; qL_pool max|d| 4.037e-01; qL_idx_keys max|d| 9.854e-01; qL_kv_k max|d| 1.291e+00; qL_kv_v max|d| 8.105e-01; dL_conv max|d| 2.186e+00; dL_state max|d| 5.309e-02 (+3)
+chat-en step 3: top_id 46 elems differ, greedy 310 vs 310; top_p max|d| 2.204e-04; qL_pool max|d| 3.546e-01; qL_idx_keys max|d| 9.854e-01; qL_kv_k max|d| 1.291e+00; qL_kv_v max|d| 8.105e-01; dL_conv max|d| 2.186e+00; dL_state max|d| 5.333e-02 (+3)
+chat-en step 4: top_id 47 elems differ, greedy 1156 vs 1156; top_p max|d| 1.982e-04; qL_pool max|d| 3.546e-01; qL_idx_keys max|d| 9.854e-01; qL_kv_k max|d| 1.291e+00; qL_kv_v max|d| 8.105e-01; dL_conv max|d| 2.186e+00; dL_state max|d| 5.539e-02 (+3)
+chat-it step p: OK
+chat-it step 0: top_id 45 elems differ, greedy 1144 vs 1144; top_p max|d| 1.009e-03; q0_pool max|d| 2.940e+00; q0_idx_keys max|d| 2.965e+00; q0_kv_k max|d| 3.486e+00; q0_kv_v max|d| 1.640e+00; qL_pool max|d| 3.012e+00; qL_idx_keys max|d| 5.375e+00 (+7)
+chat-it step 1: top_id 42 elems differ, greedy 4087 vs 4087; top_p max|d| 3.588e-01; qL_pool max|d| 1.370e-01; qL_idx_keys max|d| 6.155e-01; qL_kv_k max|d| 4.941e-01; qL_kv_v max|d| 5.400e-01; dL_conv max|d| 1.041e+00; dL_state max|d| 1.639e-02 (+3)
+chat-it step 2: top_id 44 elems differ, greedy 1156 vs 1156; top_p max|d| 3.335e-02; qL_pool max|d| 2.015e-01; qL_idx_keys max|d| 6.155e-01; qL_kv_k max|d| 4.941e-01; qL_kv_v max|d| 5.400e-01; dL_conv max|d| 1.041e+00; dL_state max|d| 1.533e-02 (+3)
+chat-it step 3: top_id 39 elems differ, greedy 303 vs 303; top_p max|d| 4.282e-02; qL_pool max|d| 2.302e-01; qL_idx_keys max|d| 6.155e-01; qL_kv_k max|d| 4.941e-01; qL_kv_v max|d| 5.400e-01; dL_conv max|d| 1.041e+00; dL_state max|d| 1.640e-02 (+3)
+chat-it step 4: top_id 47 elems differ, greedy 14382 vs 14382; top_p max|d| 6.234e-05; qL_pool max|d| 1.715e-01; qL_idx_keys max|d| 6.155e-01; qL_kv_k max|d| 5.445e-01; qL_kv_v max|d| 5.400e-01; dL_conv max|d| 9.459e-01; dL_state max|d| 1.617e-02 (+3)
+code step p: res max|d| 1.211e+00; ffn_in max|d| 7.349e-01; injL max|d| 5.960e-01
+code step 0: top_id 43 elems differ, greedy 413 vs 413; top_p max|d| 1.502e-02; q0_pool max|d| 2.803e+00; q0_idx_keys max|d| 3.297e+00; q0_kv_k max|d| 3.697e+00; q0_kv_v max|d| 2.868e+00; qL_pool max|d| 2.988e+00; qL_idx_keys max|d| 3.803e+00 (+7)
+code step 1: top_id 39 elems differ, greedy 307 vs 307; top_p max|d| 7.877e-03; q0_pool max|d| 9.537e-03; q0_idx_keys max|d| 5.078e-02; q0_kv_k max|d| 7.625e-02; q0_kv_v max|d| 6.008e-02; qL_pool max|d| 9.823e-02; qL_idx_keys max|d| 4.012e-01 (+8)
+code step 2: top_id 30 elems differ, greedy 361 vs 361; top_p max|d| 2.724e-02; q0_pool max|d| 1.499e-02; q0_idx_keys max|d| 5.078e-02; q0_kv_k max|d| 7.625e-02; q0_kv_v max|d| 6.008e-02; qL_pool max|d| 9.823e-02; qL_idx_keys max|d| 4.012e-01 (+8)
+code step 3: top_id 45 elems differ, greedy 220 vs 220; top_p max|d| 3.693e-05; q0_pool max|d| 1.984e-02; q0_idx_keys max|d| 5.078e-02; q0_kv_k max|d| 7.625e-02; q0_kv_v max|d| 6.008e-02; qL_pool max|d| 9.823e-02; qL_idx_keys max|d| 4.012e-01 (+8)
+code step 4: top_id 39 elems differ, greedy 15 vs 15; top_p max|d| 2.101e-02; q0_pool max|d| 2.038e-02; q0_idx_keys max|d| 5.078e-02; q0_kv_k max|d| 7.625e-02; q0_kv_v max|d| 6.008e-02; qL_pool max|d| 1.294e-01; qL_idx_keys max|d| 4.012e-01 (+8)
+raw step p: res max|d| 2.133e+00; ffn_in max|d| 4.372e-01; injL max|d| 3.807e-01
+raw step 0: top_id 42 elems differ, greedy 57177 vs 57177; top_p max|d| 1.478e-02; q0_idx_keys max|d| 3.203e+00; q0_kv_k max|d| 4.712e+00; q0_kv_v max|d| 2.300e+00; qL_pool max|d| 3.101e-02; qL_idx_keys max|d| 6.191e+00; qL_kv_k max|d| 1.084e+01 (+6)
+raw step 1: top_id 46 elems differ, greedy 11 vs 11; top_p max|d| 1.484e-02; qL_pool max|d| 6.450e-02; qL_idx_keys max|d| 2.212e-01; qL_kv_k max|d| 3.856e-01; qL_kv_v max|d| 2.043e-01; dL_conv max|d| 8.475e-01; dL_state max|d| 5.413e-03 (+3)
+raw step 2: top_id 42 elems differ, greedy 2843 vs 2843; top_p max|d| 1.578e-02; qL_pool max|d| 8.380e-02; qL_idx_keys max|d| 2.212e-01; qL_kv_k max|d| 3.856e-01; qL_kv_v max|d| 2.043e-01; dL_conv max|d| 8.475e-01; dL_state max|d| 8.463e-03 (+3)
+raw step 3: top_id 31 elems differ, greedy 3750 vs 3750; top_p max|d| 2.087e-02; q0_pool max|d| 5.160e-02; q0_idx_keys max|d| 2.947e-01; q0_kv_k max|d| 6.603e-01; q0_kv_v max|d| 2.439e-01; qL_pool max|d| 8.380e-02; qL_idx_keys max|d| 2.412e-01 (+8)
+raw step 4: top_id 37 elems differ, greedy 430 vs 430; top_p max|d| 3.030e-04; q0_pool max|d| 6.887e-02; q0_idx_keys max|d| 2.947e-01; q0_kv_k max|d| 6.603e-01; q0_kv_v max|d| 2.439e-01; qL_pool max|d| 8.380e-02; qL_idx_keys max|d| 2.412e-01 (+8)
+== any step diverges
+== summary: ab=0 diff=0
+== end 01:36:54
