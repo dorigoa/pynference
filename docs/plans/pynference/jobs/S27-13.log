@@ -1,0 +1,105 @@
+== start 01:59:21
+== ab exit 0 (02:01:15) (atteso 0)
+fused chat-it: done, greedy [1596, 1144, 310, 4087, 1156]
+fused chat-en: done, greedy [1596, 1144, 310, 5707, 310]
+fused code: done, greedy [262, 413, 307, 361, 220]
+fused raw: done, greedy [4756, 57177, 11, 2843, 3750]
+== diff exit 0 (02:01:15)
+chat-en step p: res max|d| 6.080e-01; ffn_in max|d| 5.863e-01; injL max|d| 2.421e-01
+chat-en step 0: top_id 44 elems differ, greedy 1144 vs 1144; top_p max|d| 2.241e-04; qL_pool max|d| 2.149e-01; qL_idx_keys max|d| 8.848e-01; qL_kv_k max|d| 1.502e+00; qL_kv_v max|d| 7.005e-01; dL_conv max|d| 2.487e+00; dL_state max|d| 3.252e-02 (+3)
+chat-en step 1: top_id 49 elems differ, greedy 310 vs 310; top_p max|d| 2.225e-02; qL_pool max|d| 3.242e-01; qL_idx_keys max|d| 9.194e-01; qL_kv_k max|d| 1.502e+00; qL_kv_v max|d| 7.911e-01; dL_conv max|d| 2.487e+00; dL_state max|d| 3.308e-02 (+3)
+chat-en step 2: top_id 45 elems differ, greedy 5707 vs 5707; top_p max|d| 7.724e-02; qL_pool max|d| 3.909e-01; qL_idx_keys max|d| 9.360e-01; qL_kv_k max|d| 1.502e+00; qL_kv_v max|d| 9.287e-01; dL_conv max|d| 2.487e+00; dL_state max|d| 4.729e-02 (+3)
+chat-en step 3: top_id 47 elems differ, greedy 310 vs 310; top_p max|d| 1.097e-03; qL_pool max|d| 3.344e-01; qL_idx_keys max|d| 9.360e-01; qL_kv_k max|d| 1.502e+00; qL_kv_v max|d| 9.287e-01; dL_conv max|d| 2.325e+00; dL_state max|d| 4.617e-02 (+3)
+chat-en step 4: top_id 43 elems differ, greedy 1156 vs 1156; top_p max|d| 5.643e-05; qL_pool max|d| 3.344e-01; qL_idx_keys max|d| 9.360e-01; qL_kv_k max|d| 1.502e+00; qL_kv_v max|d| 9.287e-01; dL_conv max|d| 2.325e+00; dL_state max|d| 4.777e-02 (+3)
+chat-it step p: OK
+chat-it step 0: top_id 46 elems differ, greedy 1144 vs 1144; top_p max|d| 1.128e-03; qL_pool max|d| 1.524e-01; qL_idx_keys max|d| 8.447e-01; qL_kv_k max|d| 9.053e-01; qL_kv_v max|d| 8.636e-01; dL_conv max|d| 1.495e+00; dL_state max|d| 1.899e-02 (+3)
+chat-it step 1: top_id 45 elems differ, greedy 310 vs 4087; top_p max|d| 3.265e-01; qL_pool max|d| 1.524e-01; qL_idx_keys max|d| 8.447e-01; qL_kv_k max|d| 9.053e-01; qL_kv_v max|d| 1.541e+00; dL_conv max|d| 1.495e+00; dL_state max|d| 2.981e-02 (+3)
+chat-it step 2: top_id 46 elems differ, greedy 4087 vs 4087; top_p max|d| 1.250e-01; qL_pool max|d| 2.380e-01; qL_idx_keys max|d| 8.447e-01; qL_kv_k max|d| 9.053e-01; qL_kv_v max|d| 1.541e+00; dL_conv max|d| 1.661e+00; dL_state max|d| 2.508e-02 (+3)
+chat-it step 3: top_id 41 elems differ, greedy 1156 vs 1156; top_p max|d| 6.963e-02; qL_pool max|d| 2.759e-01; qL_idx_keys max|d| 8.447e-01; qL_kv_k max|d| 9.053e-01; qL_kv_v max|d| 1.541e+00; dL_conv max|d| 1.661e+00; dL_state max|d| 2.357e-02 (+3)
+chat-it step 4: top_id 41 elems differ, greedy 579 vs 579; top_p max|d| 9.023e-02; qL_pool max|d| 2.861e-01; qL_idx_keys max|d| 8.447e-01; qL_kv_k max|d| 9.053e-01; qL_kv_v max|d| 1.541e+00; dL_conv max|d| 1.661e+00; dL_state max|d| 2.047e-02 (+3)
+code step p: res max|d| 1.508e+00; ffn_in max|d| 7.151e-01; injL max|d| 6.581e-01
+code step 0: top_id 42 elems differ, greedy 413 vs 413; top_p max|d| 5.843e-03; qL_pool max|d| 1.499e-01; qL_idx_keys max|d| 6.299e-01; qL_kv_k max|d| 6.914e-01; qL_kv_v max|d| 4.115e-01; dL_conv max|d| 9.416e-01; dL_state max|d| 8.695e-03 (+3)
+code step 1: top_id 36 elems differ, greedy 307 vs 307; top_p max|d| 5.191e-03; q0_pool max|d| 9.537e-03; q0_idx_keys max|d| 5.078e-02; q0_kv_k max|d| 7.625e-02; q0_kv_v max|d| 6.008e-02; qL_pool max|d| 1.499e-01; qL_idx_keys max|d| 6.299e-01 (+8)
+code step 2: top_id 32 elems differ, greedy 361 vs 361; top_p max|d| 8.278e-02; q0_pool max|d| 1.499e-02; q0_idx_keys max|d| 5.078e-02; q0_kv_k max|d| 7.625e-02; q0_kv_v max|d| 6.008e-02; qL_pool max|d| 1.499e-01; qL_idx_keys max|d| 6.299e-01 (+8)
+code step 3: top_id 42 elems differ, greedy 220 vs 220; top_p max|d| 6.534e-05; q0_pool max|d| 1.984e-02; q0_idx_keys max|d| 5.078e-02; q0_kv_k max|d| 7.625e-02; q0_kv_v max|d| 6.008e-02; qL_pool max|d| 1.499e-01; qL_idx_keys max|d| 6.299e-01 (+8)
+code step 4: top_id 40 elems differ, greedy 15 vs 15; top_p max|d| 3.369e-02; q0_pool max|d| 2.038e-02; q0_idx_keys max|d| 5.078e-02; q0_kv_k max|d| 7.625e-02; q0_kv_v max|d| 6.008e-02; qL_pool max|d| 1.600e-01; qL_idx_keys max|d| 6.299e-01 (+8)
+raw step p: res max|d| 2.422e+00; ffn_in max|d| 4.925e-01; injL max|d| 8.862e-01
+raw step 0: top_id 41 elems differ, greedy 57177 vs 57177; top_p max|d| 2.956e-03; qL_pool max|d| 2.890e-02; qL_idx_keys max|d| 1.797e-01; qL_kv_k max|d| 3.260e-01; qL_kv_v max|d| 1.536e-01; dL_conv max|d| 5.046e-01; dL_state max|d| 7.087e-03 (+3)
+raw step 1: top_id 43 elems differ, greedy 11 vs 11; top_p max|d| 4.384e-02; qL_pool max|d| 7.071e-02; qL_idx_keys max|d| 2.026e-01; qL_kv_k max|d| 3.260e-01; qL_kv_v max|d| 2.417e-01; dL_conv max|d| 5.548e-01; dL_state max|d| 3.890e-03 (+3)
+raw step 2: top_id 45 elems differ, greedy 2843 vs 2843; top_p max|d| 5.918e-02; qL_pool max|d| 1.091e-01; qL_idx_keys max|d| 2.402e-01; qL_kv_k max|d| 3.649e-01; qL_kv_v max|d| 2.417e-01; dL_conv max|d| 5.548e-01; dL_state max|d| 5.694e-03 (+3)
+raw step 3: top_id 44 elems differ, greedy 3750 vs 3750; top_p max|d| 5.806e-02; q0_pool max|d| 2.185e-03; q0_idx_keys max|d| 1.172e-02; q0_kv_k max|d| 1.700e-02; q0_kv_v max|d| 9.311e-03; qL_pool max|d| 1.091e-01; qL_idx_keys max|d| 2.402e-01 (+8)
+raw step 4: top_id 38 elems differ, greedy 430 vs 430; top_p max|d| 2.906e-04; q0_pool max|d| 3.240e-03; q0_idx_keys max|d| 1.172e-02; q0_kv_k max|d| 1.700e-02; q0_kv_v max|d| 9.311e-03; qL_pool max|d| 1.091e-01; qL_idx_keys max|d| 2.402e-01 (+8)
+== any step diverges
+== pytest gpu exit 0 (02:05:00) (atteso 0)
+    return g / (1.0 + np.exp(-alpha * g)) * (u + 1.0)
+
+== q4 ours(graph) exit 1 (02:05:03) (atteso 0)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+== q4 diff strict (graph) exit 1 (02:05:04) (atteso 0 = gate C8)
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S27-13/ours_q4_graph.json'
+== regress qwen4exp exit 1 (02:08:42) (atteso 0)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 0.00e+00 over top-10
+ppl: baseline 1.0005, now 1.0002, rel diff 0.030%
+FAIL: chat-it: top-10 ids differ at step 1
+FAIL: chat-en: top-10 ids differ at step 1
+FAIL: code: top-10 ids differ at step 1
+FAIL: raw: top-10 ids differ at step 1
+FAIL
+== gemma ours(graph) exit 0 (02:09:43) (atteso 0)
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== gemma ppl exit 0 (02:10:09) (atteso 0)
+Final estimate: PPL = 10034.1195 +/- 1469.37140  (2040 scored tokens, 9.7s)
+== gemma cmp exit 0 (02:10:09)
+chat-it: top-10 ids differ at step 0
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 1.59e-05 over top-10
+code: top-10 ids differ at step 0
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 5.82e-03 over top-10
+ppl: baseline 10064.7540, now 10034.1195, rel diff 0.304%
+PROBLEMS
+== regress gpt-oss-120b exit 1 (02:12:25) (atteso 0)
+chat-en: max |dp| 2.12e-03 over top-10
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 1.27e-03 over top-10
+ppl: baseline 1.6095, now 1.6064, rel diff 0.193%
+FAIL: chat-it: top-10 ids differ at step 16
+FAIL: chat-it: max |dp| 1.77e-03 > 1e-3
+FAIL: chat-en: max |dp| 2.12e-03 > 1e-3
+FAIL: raw: max |dp| 1.27e-03 > 1e-3
+FAIL: ppl rel diff 0.193% > 0.1%
+FAIL
+== graph60 exit 0 (02:19:30)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+[r0] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r1] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r0] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.01G torch_res=22.07G[r1] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.01G torch_res=22.07G
+[graph] prefill 41 tokens: 49.502 ms/token (20 token/s)
+[graph] wall time per token: 105.3 ms (9.50 tok/s)
+store: hits 9396 misses 5086 copied 11.69 GiB; resident 7278/7374 slots
+floor MemAvailable 74.57 GiB, max GPUActive 39.56 GiB
+== graph2000 exit 0 (02:22:43)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+[r0] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r1] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r0] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.67G torch_res=23.51G[r1] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.67G torch_res=23.51G
+[graph] prefill 2000 tokens: 14.600 ms/token (68 token/s)
+[graph] wall time per token: 111.0 ms (9.01 tok/s)
+store: hits 28032 misses 19943 copied 46.31 GiB; resident 7278/7374 slots
+floor MemAvailable 69.95 GiB, max GPUActive 43.87 GiB
+== summary: ab=0 diff=0 gpu=0 q4gate=2 q4exp=1 gemma=0 gptoss=1 graph60=0 graph2000=0
+== end 02:22:43
