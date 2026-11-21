@@ -1,0 +1,64 @@
+== start 01:05:46
+1231 results/jobs/S27-11/qwen4exp_v0.py
+== ab old exit 0 (01:07:29) (atteso 0)
+old chat-it step 2: 255 records
+old code step 0: 255 records
+old code step 1: 255 records
+old code step 2: 255 records
+== ab new exit 0 (01:09:03) (atteso 0)
+new chat-it step 2: 255 records
+new code step 0: 255 records
+new code step 1: 255 records
+new code step 2: 255 records
+== ab diff exit 0 (01:09:03)
+chat-it_step0.npz: 0/255 records diverge; OK
+chat-it_step1.npz: 0/255 records diverge; OK
+chat-it_step2.npz: 1/255 records diverge; first diverging: logits max|d| 1.001e-05
+   old logits top10: [(760, 0.9917), (90700, 0.0049), (43, 0.0019), (8482, 0.0009), (11707, 0.0001), (79420, 0.0001), (8160, 0.0), (44, 0.0), (6374, 0.0), (50, 0.0)]
+   new logits top10: [(760, 0.9917), (90700, 0.0049), (43, 0.0019), (8482, 0.0009), (11707, 0.0001), (79420, 0.0001), (8160, 0.0), (44, 0.0), (6374, 0.0), (50, 0.0)]
+code_step0.npz: 0/255 records diverge; OK
+code_step1.npz: 0/255 records diverge; OK
+code_step2.npz: 0/255 records diverge; OK
+== q4 ours(fused) exit 0 (01:10:57) (atteso 0)
+chat-it: 'We need answer user in Italian: "Qual è la capitale d\'Italia? Rispondi in una fr'
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman emperor, marking the '
+== q4 diff strict (fused) exit 0 (01:10:57) (atteso 0 = gate)
+chat-it  same greedy tokens 4/24, max |dp| top-10 0.1005, mean partial KL 6.45e-03
+   ref:  'We need answer user\'s request in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase'
+   ours: 'We need answer user in Italian: "Qual è la capitale d\'Italia? Rispondi in una frase." Need'
+chat-en  same greedy tokens 24/24, max |dp| top-10 0.1007, mean partial KL 4.44e-03
+   ref:  'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+   ours: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+code     same greedy tokens 24/24, max |dp| top-10 0.0321, mean partial KL 7.67e-04
+   ref:  '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+   ours: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+raw      same greedy tokens 24/24, max |dp| top-10 0.0297, mean partial KL 1.76e-03
+   ref:  ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+   ours: ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+C8 strict: PASS
+== q4 fused vs golden (json S27-4):
+chat-it: top-10 ids differ at step 0
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: top-10 ids differ at step 0
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 7.07e-07 over top-10
+raw: max |dp| 1.03e-06 over top-10
+ALIGNED
+== gemma ours(graph) exit 0 (01:11:55) (atteso 0)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== gemma ppl exit 0 (01:12:21) (atteso 0)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 11.3s)
+== gemma cmp exit 0 (01:12:21)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+ALIGNED
+== summary: ab=0 diff=0 q4ours=0 q4fused_gate=0 gemma=0
+== end 01:12:21
