@@ -1,0 +1,184 @@
+== start 03:19:06
+== mt2 exit 1 (03:19:43) (atteso 0)
+  store: expandable_segments on (no host-RAM mirror, S26)
+  store: layer 0 gate: 154 resident + 2 swap slots -> 98 MB
+  MoE: 512 experts x 48 layers, budget 18.38 GB (dense 2.88, kv 0.10, scratch 1.07, host pin 72.93 GB)
+  store: expandable_segments on (no host-RAM mirror, S26)
+  store: layer 0 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 0 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 0 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 0 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 0 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 1 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 1 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 1 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 1 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 1 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 1 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 2 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 2 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 2 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 2 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 2 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 2 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 3 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 3 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 3 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 3 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 3 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 3 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 4 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 4 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 4 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 4 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 4 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 4 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 5 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 5 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 5 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 5 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 5 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 5 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 6 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 6 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 6 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 6 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 6 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 6 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 7 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 7 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 7 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 7 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 7 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 7 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 8 gate: 155 resident + 2 swap slots -> 82 MB
+  store: layer 8 gate: 155 resident + 2 swap slots -> 82 MB
+  store: layer 8 up: 155 resident + 2 swap slots -> 82 MB
+  store: layer 8 up: 155 resident + 2 swap slots -> 82 MB
+  store: layer 8 down: 155 resident + 2 swap slots -> 72 MB
+  store: layer 8 down: 155 resident + 2 swap slots -> 72 MB
+  store: layer 9 gate: 154 resident + 2 swap slots -> 82 MB
+  store: layer 9 gate: 154 resident + 2 swap slots -> 82 MB
+  store: layer 9 up: 154 resident + 2 swap slots -> 82 MB
+  store: layer 9 up: 154 resident + 2 swap slots -> 82 MB
+  store: layer 9 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 9 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 10 gate: 154 resident + 2 swap slots -> 82 MB
+  store: layer 10 gate: 154 resident + 2 swap slots -> 82 MB
+  store: layer 10 up: 154 resident + 2 swap slots -> 82 MB
+  store: layer 10 up: 154 resident + 2 swap slots -> 82 MB
+  store: layer 10 down: 154 resident + 2 swap slots -> 72 MB
+  store: layer 10 down: 154 resident + 2 swap slots -> 72 MB
+  store: layer 11 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 11 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 11 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 11 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 11 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 11 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 12 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 12 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 12 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 12 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 12 down: 154 resident + 2 swap slots -> 176 MB
+[rank1]: Traceback (most recent call last):
+[rank1]:   File "/home/alvise/pynference/results/jobs/S27-15/mt2.py", line 153, in <module>
+[rank1]:     main()
+--
+[rank1]: IndexError: invalid index of a 0-dim tensor. Use `tensor.item()` in Python or `tensor.item<T>()` in C++ to convert a 0-dim tensor to a number
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/home/alvise/pynference/results/jobs/S27-15/mt2.py", line 153, in <module>
+[rank0]:     main()
+--
+[rank0]: IndexError: invalid index of a 0-dim tensor. Use `tensor.item()` in Python or `tensor.item<T>()` in C++ to convert a 0-dim tensor to a number
+E1121 03:19:42.990000 1946192 torch/distributed/elastic/multiprocessing/api.py:1002] failed (exitcode: 1) local_rank: 0 (pid: 1946218) of binary: /home/alvise/pynference/.venv/bin/python
+Traceback (most recent call last):
+  File "/home/alvise/pynference/.venv/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+--
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 384, in wrapper
+    result = f(*args, **kwargs)
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/run.py", line 1138, in main
+--
+    raise ChildFailedError(
+    ...<2 lines>...
+    )
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+results/jobs/S27-15/mt2.py FAILED
+--
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+------------------------------------------------------------
+Root Cause (first observed failure):
+== gemma gf1 (fused) exit 0 (03:20:45) (atteso 0)
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== gemma gf2 (fused) exit 0 (03:21:18) (atteso 0)
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== gemma gg1 (graph) exit 0 (03:21:49) (atteso 0)
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== gemma gg2 (graph) exit 0 (03:22:18) (atteso 0)
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== gemma fused1-vs-fused2 exit 1 (03:22:18) (atteso 0 se eager deterministico)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 2.96e-08 over top-10
+code: max |dp| 2.76e-05 over top-10
+raw: max |dp| 2.61e-02 over top-10
+FAIL: chat-it: top-10 ids differ at step 0
+FAIL: chat-en: top-10 ids differ at step 6
+FAIL: code: top-10 ids differ at step 3
+FAIL: raw: max |dp| 2.61e-02 > 1e-3
+== gemma graph1-vs-graph2 exit 0 (03:22:18) (0 se replay deterministica)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 0.00e+00 over top-10
+PASS
+== gemma fused1-vs-graph1 exit 1 (03:22:18) (atteso 0)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 2.95e-08 over top-10
+code: max |dp| 2.77e-05 over top-10
+raw: max |dp| 2.62e-02 over top-10
+FAIL: chat-it: top-10 ids differ at step 0
+FAIL: chat-en: top-10 ids differ at step 6
+FAIL: code: top-10 ids differ at step 3
+FAIL: raw: max |dp| 2.62e-02 > 1e-3
+== q4 qG1 (graph) exit 0 (03:25:28) (atteso 0)
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman Emperor. This marked '
+== q4 qG2 (graph) exit 0 (03:27:31) (atteso 0)
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman Emperor. This marked '
+== q4 qF1 (fused) exit 0 (03:29:27) (atteso 0)
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman emperor, marking the '
+== q4 graph1-vs-graph2 exit 1 (03:29:27) (0 se replay deterministica)
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 3.62e-03 over top-10
+FAIL: chat-it: top-10 ids differ at step 5
+FAIL: chat-it: max |dp| 7.91e-02 > 1e-3
+FAIL: chat-en: top-10 ids differ at step 2
+FAIL: code: top-10 ids differ at step 1
+FAIL: raw: top-10 ids differ at step 2
+FAIL: raw: max |dp| 3.62e-03 > 1e-3
+== q4 fused1-vs-graph1 exit 1 (03:29:27) (atteso 0 se replay fedele)
+code: max |dp| 6.01e-02 over top-10
+raw: max |dp| 7.30e-03 over top-10
+FAIL: chat-it: top-10 ids differ at step 1
+FAIL: chat-en: top-10 ids differ at step 1
+FAIL: code: top-10 ids differ at step 4
+FAIL: code: max |dp| 6.01e-02 > 1e-3
+FAIL: raw: top-10 ids differ at step 2
+FAIL: raw: max |dp| 7.30e-03 > 1e-3
+== summary: mt2=1 gf1=0 gf2=0 gg1=0 gg2=0 c_gff=1 c_gg=0 c_fg=1 qg1=0 qg2=0 qf1=0 c_qgg=1 c_qfg=1
+== end 03:29:27
