@@ -1,0 +1,164 @@
+== start 19:38:20
+== diag PRE-export 19:38:20
+CUDA_VISIBLE_DEVICES= None
+torch 2.15.0+xpu version.cuda= None
+cuda.is_available= False xpu.is_available= True
+triton driver diag: RuntimeError 2 active drivers ([<class 'triton.backends.intel.driver.XPUDriver'>, <class 'triton.backends.nvidia.driver.CudaDriver'>]). There should only be one.
+intel-cmplr-lib-rt 2026.1.2
+intel-cmplr-lib-ur 2026.1.2
+intel-cmplr-lic-rt 2026.1.2
+intel-opencl-rt    2026.1.2
+intel-openmp       2026.1.2
+intel-pti          1.1.0
+intel-sycl-rt      2026.1.2
+torch              2.15.0+xpu
+triton-xpu         3.9.0
+== nvidia probe 19:38:21
+/dev/nvidia0
+/dev/nvidiactl
+/dev/nvidia-modeset
+NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  615.71.09  Release Build  (dvs-builder@U22-I3-F05-2-4)  Fri Sep  4 22:33:33 UTC 2026
+nvidia
+nvidia-nvswitch
+== diag POST-export 19:38:21
+torch 2.15.0+xpu version.cuda= None
+cuda.is_available= False xpu.is_available= True
+triton driver.active = <triton.backends.intel.driver.XPUDriver object at 0x7ed261043380>
+== q4 f1(fused,wrapper) exit 0 (19:40:22) (atteso 0)
+chat-it: 'We need answer user in Italian: "Qual è la capitale d\'Italia? Rispondi in una fr'
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman emperor, marking the '
+== q4 gate f1 19:40:22 (atteso 0 = C8, vecchio ambiente 0 in S27-17)
+   ref:  ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+   ours: ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+C8 FAIL: chat-it: mean partial KL 1.54e-02 > 0.01
+C8 FAIL: chat-en: mean partial KL 1.49e-02 > 0.01
+C8 FAIL: greedy-identical prompts: 2/4, 3 required
+C8 strict: FAIL
+== q4 pplq4 ppl exit 0 (19:42:28) (atteso 0)
+Final estimate: PPL = 1.0005 +/- 0.00027  (2040 scored tokens, 94.1s)
+== q4 f2(fused,wrapper) exit 0 (19:44:25) (atteso 0)
+chat-it: 'We need answer user in Italian: "Qual è la capitale d\'Italia? Rispondi in una fr'
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman emperor, marking the '
+== q4 gate f2 19:44:25 (atteso 0 = C8)
+   ref:  ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+   ours: ' Octavian, later known as Augustus, became the first Roman emperor, marking the transition from the '
+C8 FAIL: chat-it: mean partial KL 2.03e-02 > 0.01
+C8 FAIL: chat-en: mean partial KL 2.05e-02 > 0.01
+C8 FAIL: greedy-identical prompts: 2/4, 3 required
+C8 strict: FAIL
+== q4 cmpjj f1-vs-f2 exit 1 (19:44:25)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 1.31e-02 over top-10
+raw: max |dp| 2.13e-02 over top-10
+FAIL: chat-it: top-10 ids differ at step 1
+FAIL: chat-en: top-10 ids differ at step 0
+FAIL: code: top-10 ids differ at step 8
+FAIL: code: max |dp| 1.31e-02 > 1e-3
+FAIL: raw: top-10 ids differ at step 7
+FAIL: raw: max |dp| 2.13e-02 > 1e-3
+    7386 of 12288 local experts resident, 96 swap slots, store 18.38 GB, pinned 12.04 GB
+  store: host cache ON, 12.04 GB of non-resident experts pinned (allowance 72.93 GB)
+    7386 of 12288 local experts resident, 96 swap slots, store 18.38 GB, pinned 12.04 GB
+  store: host cache ON, 12.04 GB of non-resident experts pinned (allowance 72.93 GB)
+== gpt-oss o1(fused,wrapper) exit 124 (20:09:26) (atteso 0)
+  store: layer 35 down: 40 resident + 2 swap slots -> 185 MB
+  store: layer 35 down: 40 resident + 2 swap slots -> 185 MB
+  MoE: 1440 of 2304 local experts resident, 72 swap slots, store 19.99 GB, pinned 0.00 GB
+  gpt-oss: load done in 60.3s
+Traceback (most recent call last):
+  File "/home/alvise/pynference/.venv/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 384, in wrapper
+    result = f(*args, **kwargs)
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/run.py", line 1138, in main
+    run(args)
+    ~~~^^^^^^
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/run.py", line 1129, in run
+    elastic_launch(
+    ~~~~~~~~~~~~~~~
+        config=config,
+        ~~~~~~~~~~~~~~
+        entrypoint=cmd,
+        ~~~~~~~~~~~~~~~
+    )(*cmd_args)
+    ~^^^^^^^^^^^
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/launcher/api.py", line 197, in __call__
+    return launch_agent(
+        self._config,
+    ...<2 lines>...
+        health_check_server=self._health_check_server,
+    )
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/launcher/api.py", line 377, in launch_agent
+    result = agent.run()
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/metrics/api.py", line 134, in wrapper
+    result = f(*args, **kwargs)
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/agent/server/api.py", line 744, in run
+    result = self._invoke_run(role)
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/agent/server/api.py", line 922, in _invoke_run
+    time.sleep(monitor_interval)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/api.py", line 86, in _terminate_process_handler
+    raise SignalException(f"Process {os.getpid()} got signal: {sigval}", sigval=sigval)
+torch.distributed.elastic.multiprocessing.api.SignalException: Process 105323 got signal: 15
+== gpt-oss gate o1 20:09:26 (atteso 0 = C8, vecchio ambiente 0 in S27-14)
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S27-20/o1.json'
+== gpt-oss ppl exit 0 (20:10:30) (atteso 0)
+[1]1.8907,[2]1.4346,[3]1.4293,[4]2.0887,[5]1.9240,[6]1.7433,[7]1.6240,[8]1.6115,
+Final estimate: PPL = 1.6115 +/- 0.04063  (2040 scored tokens, 51.1s)
+== gpt-oss o2(fused,wrapper) exit 0 (20:11:13) (atteso 0)
+chat-it: 'analysisThe user asks in Italian: "Qual è la capitale d\'Italia? Rispondi in una '
+chat-en: 'analysisWe need to write a haiku about the sea. Haiku is 5-7-5 syll'
+code: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, '
+raw: ' Augustus Caesar became the first emperor. The empire was known for its military'
+== gpt-oss gate o2 20:11:13 (atteso 0 = C8)
+   ref:  '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+   ours: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+raw      same greedy tokens 9/24, max |dp| top-10 0.0454, mean partial KL 8.81e-03
+   ref:  ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+   ours: ' Augustus Caesar became the first emperor. The empire was known for its military conquests, cultural'
+C8 strict: PASS
+== gpt-oss cmpjj o1-vs-o2 exit 1 (20:11:13)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/results/jobs/S27-20/cmpjj.py", line 6, in <module>
+    base = json.load(open(base_path))
+                     ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S27-20/o1.json'
+  MoE: 1440 of 2304 local experts resident, 72 swap slots, store 19.99 GB, pinned 0.00 GB
+  MoE: 1440 of 2304 local experts resident, 72 swap slots, store 19.99 GB, pinned 0.00 GB
+== gemma ours(graph) exit 0 (20:12:13) (atteso 0)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== gemma gate 20:12:13 (atteso 0)
+   ref:  '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+   ours: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw      same greedy tokens 24/24, max |dp| top-10 0.1761, mean partial KL 3.54e-03
+   ref:  ' Augustus Caesar became the first emperor. The empire expanded across three continents: Europe, Afri'
+   ours: ' Augustus Caesar became the first emperor. The empire expanded across three continents: Europe, Afri'
+C8 strict: PASS
+== gemma ppl exit 0 (20:12:37) (atteso 0)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 10.3s)
+== gemma cmp1 vs golden exit 1 (20:12:37) (atteso 0, = S27-19)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 1.83e-08 over top-10
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 8.66e-03 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+FAIL: chat-it: top-10 ids differ at step 0
+FAIL: chat-en: top-10 ids differ at step 6
+FAIL: code: top-10 ids differ at step 0
+FAIL: raw: max |dp| 8.66e-03 > 1e-3
+== summary: qf1=0 qg1=1 qppl=0 qf2=0 qg2=1 qcmp=1 of1=124 og1=1 oppl=0 of2=0 og2=0 ocmp=1 gmours=0 gmgate=0 gmppl=0 gmcmp=1
+== end 20:12:37
