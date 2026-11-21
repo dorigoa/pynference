@@ -1,0 +1,26 @@
+== start 21:49:24
+== nvidia probe 21:49:24
+/dev/nvidia0
+/dev/nvidiactl
+/dev/nvidia-modeset
+/dev/nvidia-uvm
+/dev/nvidia-uvm-tools
+
+NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  615.71.09  Release Build  (dvs-builder@U22-I3-F05-2-4)  Fri Sep  4 22:33:33 UTC 2026
+== diag NO-workaround 21:49:24
+CUDA_VISIBLE_DEVICES= None
+torch 2.15.0+xpu version.cuda= None
+cuda.is_available= False xpu.is_available= True
+triton driver diag: RuntimeError 2 active drivers ([<class 'triton.backends.intel.driver.XPUDriver'>, <class 'triton.backends.nvidia.driver.CudaDriver'>]). There should only be one.
+intel-cmplr-lib-rt 2026.1.2
+intel-cmplr-lib-ur 2026.1.2
+intel-cmplr-lic-rt 2026.1.2
+intel-opencl-rt    2026.1.2
+intel-openmp       2026.1.2
+intel-pti          1.1.0
+intel-sycl-rt      2026.1.2
+torch              2.15.0+xpu
+triton-xpu         3.9.0
+== ENV-BROKEN: triton multi-driver STILL broken senza workaround — matrice saltata 21:49:25
+== summary: env=0 canary=0 q4f1=255 q4gate=255 q4ppl=255 q4rebase=255 q4f2=255 q4r2=255 q4f3=255 q4r3=255 q4graphshot=255 gemmaours=255 gemmagate=255 gemppl=255 gemmacmp1=255 gemmacmp2=255 gptoss=255 gptoss2=255 graph60=255 gpu=255
+== end 21:49:25
