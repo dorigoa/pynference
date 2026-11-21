@@ -1,0 +1,229 @@
+== start 03:54:14
+== q4 qG1 (graph) exit 0 (03:56:15) (atteso 0)
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: " Octavian, Julius Caesar's adopted son, became the first Roman Emperor, Augustus"
+  store: host cache ON, 12.04 GB of non-resident experts pinned (allowance 72.93 GB)
+  store: host cache ON, 12.04 GB of non-resident experts pinned (allowance 72.93 GB)
+== q4 qG2 (graph) exit 0 (03:58:12) (atteso 0)
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman Emperor. This marked '
+  store: host cache ON, 12.04 GB of non-resident experts pinned (allowance 72.93 GB)
+  store: host cache ON, 12.04 GB of non-resident experts pinned (allowance 72.93 GB)
+== q4 qF1 (fused) exit 0 (04:00:06) (atteso 0)
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman emperor, marking the '
+  store: host cache ON, 12.04 GB of non-resident experts pinned (allowance 72.93 GB)
+  store: host cache ON, 12.04 GB of non-resident experts pinned (allowance 72.93 GB)
+== q4 qF2 (fused) exit 0 (04:02:01) (atteso 0)
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman emperor, marking the '
+  store: host cache ON, 12.04 GB of non-resident experts pinned (allowance 72.93 GB)
+  store: host cache ON, 12.04 GB of non-resident experts pinned (allowance 72.93 GB)
+== q4 cmp qf12 exit 1 (04:02:01) (0 se eager q4 deterministico)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 4.42e-07 over top-10
+raw: max |dp| 4.22e-06 over top-10
+FAIL: chat-it: top-10 ids differ at step 0
+FAIL: chat-en: top-10 ids differ at step 0
+== q4 cmp qg12 exit 1 (04:02:01) (0 se replay deterministica)
+chat-en: max |dp| 1.24e-02 over top-10
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 0.00e+00 over top-10
+FAIL: chat-it: top-10 ids differ at step 1
+FAIL: chat-en: top-10 ids differ at step 1
+FAIL: chat-en: max |dp| 1.24e-02 > 1e-3
+FAIL: code: top-10 ids differ at step 2
+FAIL: raw: greedy token differs at step 3
+== q4 cmp qf1g1 exit 1 (04:02:01) (fused vs graph (prima coppie))
+code: max |dp| 8.73e-03 over top-10
+raw: max |dp| 4.55e-02 over top-10
+FAIL: chat-it: top-10 ids differ at step 0
+FAIL: chat-en: top-10 ids differ at step 0
+FAIL: code: top-10 ids differ at step 2
+FAIL: code: max |dp| 8.73e-03 > 1e-3
+FAIL: raw: greedy token differs at step 3
+FAIL: raw: max |dp| 4.55e-02 > 1e-3
+== q4 cmp qf2g2 exit 1 (04:02:01) (fused vs graph (seconde coppie))
+code: max |dp| 8.73e-03 over top-10
+raw: max |dp| 4.55e-02 over top-10
+FAIL: chat-it: top-10 ids differ at step 1
+FAIL: chat-en: top-10 ids differ at step 1
+FAIL: code: top-10 ids differ at step 2
+FAIL: code: max |dp| 8.73e-03 > 1e-3
+FAIL: raw: top-10 ids differ at step 3
+FAIL: raw: max |dp| 4.55e-02 > 1e-3
+== q4 cmp qf1g2 exit 1 (04:02:01) (incrocio)
+code: max |dp| 8.73e-03 over top-10
+raw: max |dp| 4.55e-02 over top-10
+FAIL: chat-it: top-10 ids differ at step 0
+FAIL: chat-en: top-10 ids differ at step 0
+FAIL: code: top-10 ids differ at step 2
+FAIL: code: max |dp| 8.73e-03 > 1e-3
+FAIL: raw: top-10 ids differ at step 3
+FAIL: raw: max |dp| 4.55e-02 > 1e-3
+== q4 qF1-vs-golden exit 1 (04:02:01) (golden eager S27-4)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 7.07e-07 over top-10
+raw: max |dp| 1.39e-06 over top-10
+FAIL: chat-it: top-10 ids differ at step 0
+FAIL: chat-en: top-10 ids differ at step 0
+== q4 qG1-vs-golden exit 1 (04:02:01) (golden eager S27-4)
+raw: max |dp| 4.55e-02 over top-10
+FAIL: chat-it: top-10 ids differ at step 1
+FAIL: chat-en: top-10 ids differ at step 1
+FAIL: chat-en: max |dp| 1.24e-02 > 1e-3
+FAIL: code: top-10 ids differ at step 2
+FAIL: code: max |dp| 8.73e-03 > 1e-3
+FAIL: raw: greedy token differs at step 3
+FAIL: raw: max |dp| 4.55e-02 > 1e-3
+== q4 diff strict qG1 (graph) exit 1 (04:02:01) (atteso 0 = gate C8 graph)
+   ref:  '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+   ours: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+raw      same greedy tokens 3/24, max |dp| top-10 0.1470, mean partial KL 2.09e-02
+   ref:  ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+   ours: " Octavian, Julius Caesar's adopted son, became the first Roman Emperor, Augustus. The empire's expan"
+C8 FAIL: chat-it: mean partial KL 7.00e-02 > 0.01
+C8 FAIL: chat-en: mean partial KL 2.74e-02 > 0.01
+C8 FAIL: raw: mean partial KL 2.09e-02 > 0.01
+C8 FAIL: greedy-identical prompts: 2/4, 3 required
+C8 strict: FAIL
+== q4 diff strict qF1 (fused) exit 0 (04:02:01) (atteso 0 = gate C8 fused)
+chat-en  same greedy tokens 24/24, max |dp| top-10 0.1309, mean partial KL 3.48e-03
+   ref:  'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+   ours: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+code     same greedy tokens 24/24, max |dp| top-10 0.0321, mean partial KL 7.67e-04
+   ref:  '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+   ours: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+raw      same greedy tokens 24/24, max |dp| top-10 0.0297, mean partial KL 1.76e-03
+   ref:  ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+   ours: ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+C8 strict: PASS
+== mt3 exit 0 (04:03:40) (atteso 0)
+  MoE: 512 experts x 48 layers, budget 18.38 GB (dense 2.88, kv 0.10, scratch 1.07, host pin 72.93 GB)
+  store: expandable_segments on (no host-RAM mirror, S26)
+  store: layer 0 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 0 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 0 down: 154 resident + 2 swap slots -> 176 MB
+  store: expandable_segments on (no host-RAM mirror, S26)
+  store: layer 0 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 1 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 0 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 1 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 0 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 1 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 1 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 2 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 1 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 2 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 2 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 1 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 2 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 3 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 2 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 3 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 2 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 3 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 3 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 4 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 3 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 4 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 3 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 4 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 4 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 5 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 4 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 5 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 4 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 5 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 5 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 6 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 5 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 6 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 5 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 6 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 6 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 7 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 6 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 7 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 6 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 7 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 7 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 8 gate: 155 resident + 2 swap slots -> 82 MB
+  store: layer 7 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 8 up: 155 resident + 2 swap slots -> 82 MB
+  store: layer 8 down: 155 resident + 2 swap slots -> 72 MB
+  store: layer 7 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 9 gate: 154 resident + 2 swap slots -> 82 MB
+  store: layer 8 gate: 155 resident + 2 swap slots -> 82 MB
+  store: layer 9 up: 154 resident + 2 swap slots -> 82 MB
+  store: layer 9 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 8 up: 155 resident + 2 swap slots -> 82 MB
+  store: layer 8 down: 155 resident + 2 swap slots -> 72 MB
+  store: layer 10 gate: 154 resident + 2 swap slots -> 82 MB
+  store: layer 9 gate: 154 resident + 2 swap slots -> 82 MB
+  store: layer 10 up: 154 resident + 2 swap slots -> 82 MB
+  store: layer 9 up: 154 resident + 2 swap slots -> 82 MB
+  store: layer 10 down: 154 resident + 2 swap slots -> 72 MB
+  store: layer 9 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 11 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 10 gate: 154 resident + 2 swap slots -> 82 MB
+  store: layer 11 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 10 up: 154 resident + 2 swap slots -> 82 MB
+  store: layer 11 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 10 down: 154 resident + 2 swap slots -> 72 MB
+  store: layer 11 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 12 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 11 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 12 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 11 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 12 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 12 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 13 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 12 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 13 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 12 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 13 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 13 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 14 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 13 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 14 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 13 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 14 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 14 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 15 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 14 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 15 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 14 down: 154 resident + 2 swap slots -> 144 MB
+  store: layer 15 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 15 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 16 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 15 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 16 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 15 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 16 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 16 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 17 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 16 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 16 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 17 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 17 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 17 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 17 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 18 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 17 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 18 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 18 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 18 gate: 154 resident + 2 swap slots -> 136 MB
+  store: layer 18 up: 154 resident + 2 swap slots -> 136 MB
+  store: layer 19 gate: 154 resident + 2 swap slots -> 98 MB
+  store: layer 18 down: 154 resident + 2 swap slots -> 176 MB
+  store: layer 19 up: 154 resident + 2 swap slots -> 98 MB
+  store: layer 19 down: 154 resident + 2 swap slots -> 176 MB
+== summary: qg1=0 qg2=0 qf1=0 qf2=0 q1=1 q2=1 q3=1 q4=1 q5=1 q6=1 q7=1 ggate=1 fgate=0 mt3=0
+== end 04:03:40
