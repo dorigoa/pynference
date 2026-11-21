@@ -1,0 +1,97 @@
+== start 18:39:35
+== q4 f1(fused,wrapper) exit 1 (18:40:04) (atteso 0)
+  exitcode  : 1 (pid: 39424) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+== q4 diff strict (fused) exit 1 (18:40:05) (atteso 0 = gate C8)
+    ~~~~^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 192, in main
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S27-18/f1.json'
+== q4 pplq4 ppl exit 1 (18:40:31) (atteso 0)
+== q4 re-base SKIPPED (gate non verde) 18:40:31
+== q4 f2(fused,wrapper) exit 1 (18:40:57) (atteso 0)
+  exitcode  : 1 (pid: 40361) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+== q4 pplq4b ppl exit 1 (18:41:24) (atteso 0)
+== q4 regress-fused #2 exit 1 (18:41:24) (atteso 0)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/results/jobs/S27-18/cmp2.py", line 7, in <module>
+    now = json.load(open(now_path))
+                    ~~~~^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S27-18/f2.json'
+== q4 f3(fused,wrapper) exit 1 (18:41:50) (atteso 0)
+  exitcode  : 1 (pid: 41268) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+== q4 pplq4c ppl exit 1 (18:42:17) (atteso 0)
+== q4 regress-fused #3 exit 1 (18:42:17) (atteso 0)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/results/jobs/S27-18/cmp2.py", line 7, in <module>
+    now = json.load(open(now_path))
+                    ~~~~^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S27-18/f3.json'
+== regress qwen4exp (GRAPH, fotografia, atteso FAIL) exit 1 (18:43:10)
+FAIL
+== gemma ours(graph) exit 1 (18:43:54) (atteso 0)
+  exitcode  : 1 (pid: 43020) 
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+== gemma diff strict exit 1 (18:43:54) (atteso 0 = gate C8)
+    ~~~~^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 192, in main
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S27-18/ours_gemma.json'
+== gemma ppl exit 1 (18:44:09) (atteso 0)
+== gemma cmp1 vs golden exit 1 (18:44:09) (atteso 0)
+Traceback (most recent call last):
+  File "/home/alvise/pynference/results/jobs/S27-18/cmp2.py", line 7, in <module>
+    now = json.load(open(now_path))
+                    ~~~~^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S27-18/ours_gemma.json'
+== regress gpt-oss-120b exit 1 (18:45:16) (atteso 0)
+FAIL
+== gpt-oss ours/gate/ppl exit 1/1/1 (18:45:46) (attesi 0/0/0)
+    ~~~~^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 192, in main
+    {"fetch": fetch, "ours": ours, "diff": diff}[args.cmd](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/home/alvise/pynference/bench/compare_probs.py", line 156, in diff
+    ref, our = json.load(open(args.ref)), json.load(open(args.ours))
+                                                    ~~~~^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'results/jobs/S27-18/ours_gptoss.json'
+== gpt-oss re-base SKIPPED (gate non verde) 18:45:46
+== graph60 exit 1 (18:46:56) (atteso 0)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+[r0] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r1] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[rank1]: Traceback (most recent call last):
+[rank1]:     raise RuntimeError(f"{len(active_drivers)} active drivers ({active_drivers}). There should only be one.")
+[rank1]: RuntimeError: 2 active drivers ([<class 'triton.backends.intel.driver.XPUDriver'>, <class 'triton.backends.nvidia.driver.CudaDriver'>]). There should only be one.
+[rank0]: Traceback (most recent call last):
+[rank0]:     raise RuntimeError(f"{len(active_drivers)} active drivers ({active_drivers}). There should only be one.")
+[rank0]: RuntimeError: 2 active drivers ([<class 'triton.backends.intel.driver.XPUDriver'>, <class 'triton.backends.nvidia.driver.CudaDriver'>]). There should only be one.
+Traceback (most recent call last):
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 384, in wrapper
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+floor MemAvailable 85.13 GiB, max GPUActive 34.84 GiB
+== pytest gpu exit 1 (18:47:27) (atteso 0)
+FAILED tests/gpu/test_qwen4exp_qsa.py::test_decode_matches_cpu - RuntimeError...
+FAILED tests/gpu/test_qwen4exp_qsa_ctx.py::test_decode_across_top_k_boundary
+== summary: q4f1=1 q4gate=1 q4ppl=1 q4rebase=255 q4f2=1 q4r2=1 q4f3=1 q4r3=1 q4graphshot=1 gemmaours=1 gemmagate=1 gemppl=1 gemmacmp1=1 gemmacmp2=255 gptoss=1 gptoss2=255 graph60=1 gpu=1
+== end 18:47:27
