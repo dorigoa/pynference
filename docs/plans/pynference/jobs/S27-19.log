@@ -1,0 +1,145 @@
+== start 18:54:02
+== diag PRE-export 18:54:02
+CUDA_VISIBLE_DEVICES= None
+torch 2.15.0+xpu version.cuda= None
+cuda.is_available= False xpu.is_available= True
+triton driver diag: RuntimeError 2 active drivers ([<class 'triton.backends.intel.driver.XPUDriver'>, <class 'triton.backends.nvidia.driver.CudaDriver'>]). There should only be one.
+intel-cmplr-lib-rt 2026.1.2
+intel-cmplr-lib-ur 2026.1.2
+intel-cmplr-lic-rt 2026.1.2
+intel-opencl-rt    2026.1.2
+intel-openmp       2026.1.2
+intel-pti          1.1.0
+intel-sycl-rt      2026.1.2
+torch              2.15.0+xpu
+triton-xpu         3.9.0
+== diag POST-export 18:54:03
+CUDA_VISIBLE_DEVICES= '-1'
+torch 2.15.0+xpu version.cuda= None
+cuda.is_available= False xpu.is_available= True
+triton driver.active = <triton.backends.intel.driver.XPUDriver object at 0x7db48783b380>
+== q4 f1(fused,wrapper) exit 0 (18:56:13) (atteso 0)
+chat-it: 'We need answer user in Italian: "Qual è la capitale d\'Italia? Rispondi in una fr'
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman Emperor. This marked '
+== q4 diff strict (fused) exit 1 (18:56:13) (atteso 0 = gate C8)
+   ours: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+raw      same greedy tokens 13/24, max |dp| top-10 0.0959, mean partial KL 7.59e-03
+   ref:  ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+   ours: ' Octavian, later known as Augustus, became the first Roman Emperor. This marked the transition from '
+C8 FAIL: chat-it: mean partial KL 1.74e-02 > 0.01
+C8 FAIL: chat-en: mean partial KL 1.37e-02 > 0.01
+C8 FAIL: greedy-identical prompts: 2/4, 3 required
+C8 strict: FAIL
+== q4 pplq4 ppl exit 0 (18:58:37) (atteso 0)
+Final estimate: PPL = 1.0005 +/- 0.00028  (2040 scored tokens, 94.5s)
+== q4 re-base SKIPPED (gate non verde) 18:58:37
+== q4 f2(fused,wrapper) exit 0 (19:00:46) (atteso 0)
+chat-it: 'We need answer user in Italian: "Qual è la capitale d\'Italia? Rispondi in una fr'
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman emperor, marking the '
+== q4 pplq4b ppl exit 0 (19:02:45) (atteso 0)
+Final estimate: PPL = 1.0005 +/- 0.00025  (2040 scored tokens, 92.7s)
+== q4 regress-fused #2 exit 1 (19:02:45) (atteso 0)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 5.16e-03 over top-10
+raw: max |dp| 3.66e-03 over top-10
+ppl: baseline 1.0005, now 1.0005, rel diff 0.000%
+FAIL: chat-it: top-10 ids differ at step 1
+FAIL: chat-en: top-10 ids differ at step 1
+FAIL: code: top-10 ids differ at step 2
+FAIL: code: max |dp| 5.16e-03 > 1e-3
+FAIL: raw: top-10 ids differ at step 2
+FAIL: raw: max |dp| 3.66e-03 > 1e-3
+== q4 f3(fused,wrapper) exit 0 (19:04:42) (atteso 0)
+chat-it: 'We need answer user in Italian: "Qual è la capitale d\'Italia? Rispondi in una fr'
+chat-en: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final on'
+code: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n'
+raw: ' Octavian, later known as Augustus, became the first Roman emperor, marking the '
+== q4 pplq4c ppl exit 0 (19:06:33) (atteso 0)
+Final estimate: PPL = 1.0005 +/- 0.00028  (2040 scored tokens, 84.2s)
+== q4 regress-fused #3 exit 1 (19:06:33) (atteso 0)
+chat-it: max |dp| 0.00e+00 over top-10
+chat-en: max |dp| 0.00e+00 over top-10
+code: max |dp| 1.99e-02 over top-10
+raw: max |dp| 4.06e-03 over top-10
+ppl: baseline 1.0005, now 1.0005, rel diff 0.000%
+FAIL: chat-it: top-10 ids differ at step 1
+FAIL: chat-en: top-10 ids differ at step 1
+FAIL: code: top-10 ids differ at step 2
+FAIL: code: max |dp| 1.99e-02 > 1e-3
+FAIL: raw: top-10 ids differ at step 2
+FAIL: raw: max |dp| 4.06e-03 > 1e-3
+== regress qwen4exp (GRAPH, fotografia, atteso FAIL) exit 1 (19:10:14)
+code: max |dp| 1.71e-02 over top-10
+raw: max |dp| 1.63e-02 over top-10
+ppl: baseline 1.0005, now 1.0005, rel diff 0.000%
+FAIL: chat-it: top-10 ids differ at step 1
+FAIL: chat-en: top-10 ids differ at step 1
+FAIL: code: top-10 ids differ at step 2
+FAIL: code: max |dp| 1.71e-02 > 1e-3
+FAIL: raw: top-10 ids differ at step 2
+FAIL: raw: max |dp| 1.63e-02 > 1e-3
+FAIL
+== gemma ours(graph) exit 0 (19:11:12) (atteso 0)
+chat-it: '<|channel>thought\n*   Question: "Qual è la capitale d\'Italia?" (What is the capi'
+chat-en: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw: ' Augustus Caesar became the first emperor. The empire expanded across three cont'
+== gemma diff strict exit 0 (19:11:13) (atteso 0 = gate C8)
+   ours: '<|channel>thought\n*   Topic: The sea.\n    *   Format: Haiku (5-7-5'
+code     same greedy tokens 24/24, max |dp| top-10 0.0012, mean partial KL 7.88e-06
+   ref:  '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+   ours: '    if n <= 0:\n        return 0\n    elif n == 1:\n        return '
+raw      same greedy tokens 24/24, max |dp| top-10 0.1677, mean partial KL 3.26e-03
+   ref:  ' Augustus Caesar became the first emperor. The empire expanded across three continents: Europe, Afri'
+   ours: ' Augustus Caesar became the first emperor. The empire expanded across three continents: Europe, Afri'
+C8 strict: PASS
+== gemma ppl exit 0 (19:12:24) (atteso 0)
+Final estimate: PPL = 10064.7540 +/- 1475.01297  (2040 scored tokens, 30.3s)
+== gemma cmp1 vs golden exit 0 (19:12:24) (atteso 0)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+== regress gpt-oss-120b exit 1 (19:14:37) (atteso 0)
+raw: max |dp| 2.05e-05 over top-10
+ppl: baseline 1.6095, now 1.8419, rel diff 14.439%
+FAIL: chat-it: top-10 ids differ at step 12
+FAIL: chat-it: max |dp| 6.34e-02 > 1e-3
+FAIL: chat-en: greedy token differs at step 3
+FAIL: code: top-10 ids differ at step 22
+FAIL: code: max |dp| 1.87e-02 > 1e-3
+FAIL: raw: greedy token differs at step 9
+FAIL: ppl rel diff 14.439% > 0.1%
+FAIL
+== gpt-oss ours/gate/ppl exit 0/1/0 (19:15:54) (attesi 0/0/0)
+   ref:  '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+   ours: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+raw      same greedy tokens 9/24, max |dp| top-10 0.0485, mean partial KL 1.17e-02
+   ref:  ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+   ours: ' Augustus Caesar became the first emperor. The empire was known for its military conquests, architec'
+C8 FAIL: raw: mean partial KL 1.17e-02 > 0.01
+C8 FAIL: greedy-identical prompts: 2/4, 3 required
+C8 strict: FAIL
+== gpt-oss re-base SKIPPED (gate non verde) 19:15:54
+== graph60 exit 0 (19:20:53) (atteso 0)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+[r0] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 72.93 GB)
+[r1] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r0] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.01G torch_res=22.07G[r1] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.01G torch_res=22.07G
+[graph] prefill 41 tokens: 53.684 ms/token (19 token/s)
+[graph] wall time per token: 115.4 ms (8.67 tok/s)
+store: hits 9328 misses 5045 copied 11.61 GiB; resident 7278/7374 slots
+floor MemAvailable 75.99 GiB, max GPUActive 39.84 GiB
+== pytest gpu exit 0 (19:24:39) (atteso 0)
+    return g / (1.0 + np.exp(-alpha * g)) * (u + 1.0)
+
+== summary: q4f1=0 q4gate=1 q4ppl=0 q4rebase=255 q4f2=0 q4r2=1 q4f3=0 q4r3=1 q4graphshot=1 gemmaours=0 gemmagate=0 gemppl=0 gemmacmp1=0 gemmacmp2=255 gptoss=1 gptoss2=255 graph60=0 gpu=0
+== end 19:24:39
