@@ -1,0 +1,15 @@
+== start 17:47:42
+== nvidia probe 17:47:42
+nvidia device files: (none)
+nvidia version: (none)
+nvidia kernel modules: 0
+== ENV OK: nessun segno NVIDIA su filesystem 17:47:42
+== regress gemma4 try1 exit 0 (17:48:44) (atteso 0)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== GOS8K graph retry 17:48:44
