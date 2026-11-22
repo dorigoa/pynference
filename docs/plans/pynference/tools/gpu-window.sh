@@ -9,6 +9,7 @@
 #         docs/plans/pynference/jobs/JOB.exit   exit code
 #         docs/plans/pynference/jobs/JOB.out/   copia di results/jobs/JOB/ del PC (se < 50 MB)
 #       --no-restart: non riavvia Strata alla fine; --force: riesegue un job già eseguito
+#       Il job gira con CUDA_VISIBLE_DEVICES=-1: usa solo le Intel, mai la NVIDIA.
 #   gpu-window.sh strata-start     avvia Strata se non risponde e aspetta /health
 #   gpu-window.sh strata-stop      ferma Strata e aspetta che le GPU siano libere
 #   gpu-window.sh strata-status    "up", "loading" oppure "down"
@@ -161,8 +162,11 @@ run_job() {
   say "eseguo il job $job (timeout $tmin min)"
   t0=$(date +%s)
   rm -f "$exitf" "$log.full"
+  # CUDA_VISIBLE_DEVICES=-1: la scheda NVIDIA del PC (dal 2026-11-21) non si usa
+  # per l'inferenza; senza, Triton vede due backend (XPU e CUDA) e si ferma con
+  # "2 active drivers"
   rsh "cd '$RDIR' && . .venv/bin/activate && rm -rf 'results/jobs/$job' && mkdir -p 'results/jobs/$job' && \
-       PYI_JOB='$job' PYI_JOB_OUT='results/jobs/$job' timeout -k 60 ${tmin}m bash '$script'" > "$log.full" 2>&1
+       CUDA_VISIBLE_DEVICES=-1 PYI_JOB='$job' PYI_JOB_OUT='results/jobs/$job' timeout -k 60 ${tmin}m bash '$script'" > "$log.full" 2>&1
   rc=$?
   [ "$rc" = 124 ] && echo "[gpu-window] timeout dopo $tmin minuti" >> "$log.full"
   say "job $job finito: exit $rc in $(( ($(date +%s) - t0) / 60 )) min"
