@@ -1,0 +1,82 @@
+== start 18:19:28
+== nvidia probe 18:19:28
+nvidia device files: (none)
+nvidia version: (none)
+nvidia kernel modules: 0
+== ENV OK: nessun segno NVIDIA su filesystem 18:19:28
+== regress gemma4 try1 exit 0 (18:20:32) (atteso 0)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== GOS8K fused 18:20:32 (graph rosso 2/2: S28-3, S28-5)
+== bench gos8kf exit 134 (18:39:34) mode=fused ctx=9728 pt=8192 steps=8 (atteso 0)
+[rank0]:   File "/home/alvise/pynference/bench/decode_profile.py", line 110, in <module>
+[rank0]:   File "/home/alvise/pynference/bench/decode_profile.py", line 74, in main
+[rank0]:   File "/home/alvise/pynference/bench/decode_profile.py", line 63, in run
+[rank0]:   File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/utils/_contextlib.py", line 158, in inference_mode
+[rank0]:   File "/home/alvise/pynference/pynference/models/gptoss.py", line 837, in forward
+[rank0]:   File "/home/alvise/pynference/pynference/models/gptoss.py", line 613, in _layer_attn
+[rank0]:   File "/home/alvise/pynference/pynference/models/gptoss.py", line 569, in _attention
+[rank0]:   File "/home/alvise/pynference/pynference/models/gptoss.py", line 175, in attn_prefill
+Thread 0xCurrent thread 0x0000777c108fe6c0000073ec8aebd780 (most recent call first):
+  File   File ""/home/alvise/miniforge3/lib/python3.13/threading.py/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/distributed_c10d.py"", line , line 3634174 in  in waitall_reduce
+  File   File ""/home/alvise/miniforge3/lib/python3.13/threading.py/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/c10d_logger.py"", line , line 66083 in  in waitwrapper
+  File   File ""/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/rendezvous/utils.py/home/alvise/pynference/pynference/parallel.py"", line , line 27887 in  in all_reduce
+  File "/home/alvise/pynference/pynference/models/gptoss.py", line 617_run in 
+/home/alvise/pynference/bench/decode_profile.py  File "", line /home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/agent/server/api.py74" in , line main922
+/home/alvise/pynference/bench/decode_profile.py  File "", line /home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/agent/server/api.py110" in , line <module>744
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/elastic/metrics/api.py", line 134 in wrapper
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/launcher/api.py", line 377 in launch_agent
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/launcher/api.py", line 197 in __call__
+  File "/home/alvise/pynference/.venv/lib/python3.13/site-packages/torch/distributed/run.py
+Extension modules: "numpy._core._multiarray_umath, line 1129 in , runnumpy.linalg._umath_linalg
+floor MemAvailable 83.85 GiB, max GPUActive 26.70 GiB
+docs/plans/pynference/jobs/S28-6.sh: line 54: 297594 Aborted                    (core dumped) PYTHONFAULTHANDLER=1 timeout "$tmo" torchrun --nproc_per_node=2 bench/decode_profile.py -m "$MO" --mode "$mode" --ctx 9728 --prompt-tokens 8192 --steps 8 --no-profile > "$lg" 2>&1
+== GOS8K FUSED ROSSO (rc=134): @8192 gpt-oss non ottenibile, proseguo con i server 18:39:34
+== SERVER qwen4exp 18:39:34 (hwt=240)
+  wait q4e 40/18:41:33: 309 righe log, 292 store
+== server q4e health: {"status": "ok", "model": "Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00004"} (18:42:12)
+models: {"object": "list", "data": [{"id": "Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00004", "object": "model", "created": 1795369177, "owned_by": "pynference"}]}
+sync finish=length usage={'prompt_tokens': 62, 'completion_tokens': 24, 'total_tokens': 86} content=''
+stream: righe data=19 done=1 curl_sync=0 curl_sse=0
+== arresto server q4e 18:42:27
+== server q4e exit 0 (18:42:35) clean=1
+[pynference] loaded in 84.3s + warm-up 68.3s
+[pynference] POST /v1/chat/completions -> 24 tok (prompt 62, finish length)
+[pynference] POST /v1/chat/completions -> 16 tok (prompt 55, finish length, stream)
+[pynference] server stopped cleanly
+floor MemAvailable 70.24 GiB, max GPUActive 39.96 GiB
+== SERVER gemma4 18:42:36
+== server gemma health: {"status": "ok", "model": "gemma-4-31B-it-Q8_0"} (18:44:01)
+models: {"object": "list", "data": [{"id": "gemma-4-31B-it-Q8_0", "object": "model", "created": 1795369359, "owned_by": "pynference"}]}
+sync finish=length usage={'prompt_tokens': 22, 'completion_tokens': 24, 'total_tokens': 46} content="Ciao! Sono un'intelligenza artificiale addestrata da Google, progettata per aiut"
+stream: righe data=6 done=1 curl_sync=0 curl_sse=0
+== arresto server gemma 18:44:03
+== server gemma exit 0 (18:44:05) clean=1
+[pynference] loaded in 64.3s + warm-up 14.2s
+[pynference] POST /v1/chat/completions -> 24 tok (prompt 22, finish length)
+[pynference] POST /v1/chat/completions -> 3 tok (prompt 16, finish stop, stream)
+[pynference] server stopped cleanly
+floor MemAvailable 75.74 GiB, max GPUActive 34.89 GiB
+== SERVER qwen35-27b 18:44:07
+== server qwen health: {"status": "ok", "model": "Qwen3.8-27B-Q8_0"} (18:45:17)
+models: {"object": "list", "data": [{"id": "Qwen3.8-27B-Q8_0", "object": "model", "created": 1795369450, "owned_by": "pynference"}]}
+sync finish=length usage={'prompt_tokens': 62, 'completion_tokens': 24, 'total_tokens': 86} content=''
+stream: righe data=19 done=1 curl_sync=0 curl_sse=0
+== arresto server qwen 18:45:20
+== server qwen exit 0 (18:45:22) clean=1
+[pynference] loaded in 43.7s + warm-up 19.9s
+[pynference] POST /v1/chat/completions -> 24 tok (prompt 62, finish length)
+[pynference] POST /v1/chat/completions -> 16 tok (prompt 55, finish length, stream)
+[pynference] server stopped cleanly
+floor MemAvailable 79.77 GiB, max GPUActive 30.86 GiB
+== SERVER gpt-oss-120b 18:45:23
+== server goss health: {"status": "ok", "model": "gpt-oss-120b-MXFP4"} (18:46:29)
+models: {"object": "list", "data": [{"id": "gpt-oss-120b-MXFP4", "object": "model", "created": 1795369526, "owned_by": "pynference"}]}
+sync finish=length usage={'prompt_tokens': 77, 'completion_tokens': 24, 'total_tokens': 101} content=''
+stream: righe data=12 done=0 curl_sync=0 curl_sse=28
+== arresto server goss 18:56:45
