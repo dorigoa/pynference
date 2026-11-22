@@ -54,6 +54,8 @@ else
       --decode "$DECODE" -o "$OUT/ours_now.json" 2>&1 | grep -v -E "CCL_WARN|^W1" | tail -n 6
 fi
 echo "== ours exit ${PIPESTATUS[0]} ($(date +%T))"
+# S28-5: tieni le probabilità appena calcolate per diagnosi cross-job
+if [ -n "${REGRESS_KEEP:-}" ]; then mkdir -p "$REGRESS_KEEP"; cp "$OUT/ours_now.json" "$REGRESS_KEEP/${1}_ours_now.json"; fi
 
 echo "== regress $1: ppl $(date +%T)"
 if [ "$1" != gemma4 ]; then
