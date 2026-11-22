@@ -1,0 +1,31 @@
+== start 19:38:46
+== nvidia probe 19:38:46
+nvidia device files: (none)
+nvidia version: (none)
+nvidia kernel modules: 0
+== ENV OK: nessun segno NVIDIA su filesystem 19:38:46
+== regress gemma4 try1 exit 0 (19:40:14) (atteso 0)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== gpu tests exit 0 (19:44:05) (atteso 0)
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+142 passed, 7 skipped, 1 warning in 229.05s (0:03:49)
+== SERVER gpt-oss-120b retry (ultimo, opzionale; curl -m 300) 19:44:05
+== server goss2 health: {"status": "ok", "model": "gpt-oss-120b-MXFP4"} (19:45:02)
+models: {"object": "list", "data": [{"id": "gpt-oss-120b-MXFP4", "object": "model", "created": 1795373047, "owned_by": "pynference"}]}
+sync finish=length usage={'prompt_tokens': 77, 'completion_tokens': 24, 'total_tokens': 101} content=''
+stream: righe data=16 done=1 curl_sync=0 curl_sse=0
+== arresto server goss2 19:45:19
+== server goss2 exit 0 (19:45:20) clean=1
+[pynference] loaded in 40.8s + warm-up 12.6s
+[pynference] POST /v1/chat/completions -> 24 tok (prompt 77, finish length)
+[pynference] POST /v1/chat/completions -> 16 tok (prompt 70, finish length, stream)
+[pynference] server stopped cleanly
+floor MemAvailable 101.05 GiB, max GPUActive 10.42 GiB
+== summary: env=1 canary=1 gpu=0 srv_o=0
+== end 19:45:23
