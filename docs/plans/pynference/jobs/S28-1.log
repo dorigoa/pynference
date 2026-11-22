@@ -1,0 +1,30 @@
+== start 15:38:23
+  /home/alvise/pynference/tests/gpu/test_moe_layer.py:87: RuntimeWarning: overflow encountered in exp
+    return g / (1.0 + np.exp(-alpha * g)) * (u + 1.0)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+142 passed, 7 skipped, 1 warning in 218.05s (0:03:38)
+== gpu tests exit 0 (15:42:02)
+== regress gemma4 exit 1 (15:42:02)
+FAIL: missing model or golden files
+== regress gpt-oss-120b exit 1 (15:44:07)
+ppl: baseline 1.6066, now 1.6060, rel diff 0.037%
+FAIL: chat-it: top-10 ids differ at step 16
+FAIL: chat-it: max |dp| 1.54e-03 > 1e-3
+FAIL: chat-en: top-10 ids differ at step 11
+FAIL: code: top-10 ids differ at step 9
+FAIL: code: max |dp| 4.88e-03 > 1e-3
+FAIL: raw: max |dp| 1.32e-03 > 1e-3
+FAIL
+== regress qwen35-27b exit 1 (15:44:07)
+FAIL: missing model or golden files
+== regress qwen4exp exit 1 (15:48:45)
+FAIL: chat-it: top-10 ids differ at step 1
+FAIL: chat-it: max |dp| 1.40e-03 > 1e-3
+FAIL: chat-en: top-10 ids differ at step 0
+FAIL: code: top-10 ids differ at step 4
+FAIL: code: max |dp| 4.87e-02 > 1e-3
+FAIL: raw: top-10 ids differ at step 2
+FAIL: raw: max |dp| 1.42e-02 > 1e-3
+FAIL
+== end 15:48:45

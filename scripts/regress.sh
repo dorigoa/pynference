@@ -8,11 +8,12 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 case "${1:-}" in
-  gemma4) MODEL=/nvme/gguf/gemma-4-31B/gemma-4-31B-it-Q8_0.gguf; G=tests/golden/gemma4; DECODE=graph ;;
+  gemma4) MODEL=/nvme/gguf/gemma-4/gemma-4-31B-it-Q8_0.gguf
+          G=tests/golden/gemma4; DECODE=graph ;;              # path nuovo, deviazione S27-10 (S28-1: old path gone)
   gpt-oss-120b) MODEL=/nvme/gguf/gpt-oss-120b/gpt-oss-120b-MXFP4.gguf
                 G=tests/golden/gpt-oss-120b; DECODE=fused ;;   # graph decode is S18
-  qwen35-27b) MODEL=/nvme/gguf/Qwen3.8-27B-Q8_0.gguf
-              G=tests/golden/qwen35-27b; DECODE=fused ;;       # use_graph=False (C3, S21)
+  qwen35-27b) MODEL=/nvme/gguf/qwen3.8/Qwen3.8-27B-Q8_0.gguf
+              G=tests/golden/qwen35-27b; DECODE=fused ;;       # use_graph=False (C3, S21); path mosso dal rebuild PC (S28-1)
   qwen4exp) MODEL=/nvme/Strata-data/models/unsloth-UD-IQ4_XS-v31/Qwen3.8-Flash-Next-UD-IQ4_XS-00001-of-00004.gguf
             G=tests/golden/qwen4exp; DECODE=graph ;;           # flag inerte: percorso eager unico (S26, grafi a S27)
   *) echo "usage: scripts/regress.sh gemma4|gpt-oss-120b|qwen35-27b|qwen4exp"; exit 2 ;;
