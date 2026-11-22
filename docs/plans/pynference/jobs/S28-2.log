@@ -1,0 +1,67 @@
+== start 15:55:49
+== nvidia probe 15:55:49
+nvidia device files: (none)
+nvidia version: (none)
+nvidia kernel modules: 0
+== ENV OK: nessun segno NVIDIA su filesystem 15:55:49
+== regress gemma4 exit 0 (15:57:12) (atteso 0 = canaro + C10)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== regress qwen35-27b exit 0 (15:58:40) (atteso 0)
+chat-it: max |dp| 1.85e-05 over top-10
+chat-en: max |dp| 4.76e-05 over top-10
+code: max |dp| 2.33e-06 over top-10
+raw: max |dp| 6.70e-06 over top-10
+ppl: baseline 1.0167, now 1.0167, rel diff 0.000%
+PASS
+PASS
+== gpt-oss ours/gate/ppl exit 0/0/0 (16:00:49) (attesi 0/0/0)
+   ours: 'analysisWe need to write a haiku about the sea. Haiku is 5-7-5 syll'
+code     same greedy tokens 24/24, max |dp| top-10 0.0308, mean partial KL 2.19e-04
+   ref:  '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+   ours: '    if n <= 0:\n        raise ValueError("n must be a positive integer.")\n    a, b ='
+raw      same greedy tokens 24/24, max |dp| top-10 0.0265, mean partial KL 2.30e-03
+   ref:  ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+   ours: ' Augustus Caesar became the first emperor. The empire lasted for over 500 years, until its fall in 4'
+C8 strict: PASS
+Final estimate: PPL = 1.6083 +/- 0.04039  (2040 scored tokens, 27.6s)
+ref ppl: 0.55.876.853 I Final estimate: PPL = 1.5995 +/- 0.03987
+== regress gpt-oss (fotografia, atteso FAIL documentato) exit 1 (16:02:04)
+code: max |dp| 3.01e-03 over top-10
+raw: max |dp| 0.00e+00 over top-10
+ppl: baseline 1.6066, now 1.6083, rel diff 0.106%
+FAIL: chat-it: max |dp| 1.29e-03 > 1e-3
+FAIL: chat-en: top-10 ids differ at step 11
+FAIL: code: max |dp| 3.01e-03 > 1e-3
+FAIL: ppl rel diff 0.106% > 0.1%
+FAIL
+== q4 ours/gate/ppl exit 0/0/0 (16:07:27) (attesi 0/0/0)
+   ours: 'We need to respond to user: "Write a haiku about the sea." Simple. Need final only haiku.'
+code     same greedy tokens 24/24, max |dp| top-10 0.0321, mean partial KL 7.67e-04
+   ref:  '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+   ours: '    if n < 0:\n        raise ValueError("Input must be a non-negative integer.")\n    if n'
+raw      same greedy tokens 24/24, max |dp| top-10 0.0297, mean partial KL 1.76e-03
+   ref:  ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+   ours: ' Octavian, later known as Augustus, became the first Roman emperor, marking the end of the Roman Rep'
+C8 strict: PASS
+Final estimate: PPL = 1.0005 +/- 0.00026  (2040 scored tokens, 89.4s)
+ref ppl: 1.50.119.972 I Final estimate: PPL = 1.0002 +/- 0.00008
+== regress qwen4exp (fotografia, atteso FAIL documentato) exit 1 (16:11:44)
+ppl: baseline 1.0005, now 1.0005, rel diff 0.000%
+FAIL: chat-it: top-10 ids differ at step 2
+FAIL: chat-it: max |dp| 1.40e-03 > 1e-3
+FAIL: chat-en: top-10 ids differ at step 0
+FAIL: code: top-10 ids differ at step 1
+FAIL: raw: greedy token differs at step 3
+FAIL: raw: max |dp| 4.55e-02 > 1e-3
+FAIL
+== gpu tests exit 0 (16:15:26) (atteso 0)
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+142 passed, 7 skipped, 1 warning in 221.38s (0:03:41)
+== summary: env=1 canary=1 gemma=0 qwen35=0 gogate=0 goppl=0 goregress=1 q4gate=0 q4ppl=0 q4regress=1 gpu=0
+== end 16:15:26
