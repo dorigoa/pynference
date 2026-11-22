@@ -48,7 +48,7 @@ STRATA_TIMEOUT=${PYI_STRATA_TIMEOUT:-1800}
 JOB_MAX_MIN=${PYI_JOB_MAX_MIN:-120}
 JOBS=docs/plans/pynference/jobs
 # GPU processes that are not ours and may stay (desktop)
-DESKTOP='gnome-shell|gjs|gnome-remote-desktop|Xwayland|Xorg|mutter'
+DESKTOP='gnome-shell|gjs|gnome-remote-desktop|Xwayland|Xorg|mutter|ptyxis'
 
 say() { printf '%s [gpu-window] %s\n' "$(date +%H:%M:%S)" "$*"; }
 die() { say "ERRORE: $2" >&2; exit "$1"; }
