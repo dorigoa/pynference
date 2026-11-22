@@ -1,0 +1,18 @@
+== start 17:37:26
+== nvidia probe 17:37:26
+nvidia device files: (none)
+nvidia version: (none)
+nvidia kernel modules: 0
+== ENV OK: nessun segno NVIDIA su filesystem 17:37:26
+== regress gemma4 exit 1 (17:39:09) (atteso 0 = canaro + C10)
+chat-en: max |dp| 1.19e-05 over top-10
+code: max |dp| 0.00e+00 over top-10
+raw: max |dp| 4.02e-02 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+FAIL: chat-it: top-10 ids differ at step 0
+FAIL: code: top-10 ids differ at step 0
+FAIL: raw: max |dp| 4.02e-02 > 1e-3
+FAIL
+== CANARY-RED: gemma regress rossa — resto saltato 17:39:09
+== summary: env=1 canary=0 oC=255 oCf=255 srv_q=255 srv_g=255 srv_w=255 srv_o=255 gpu=255
+== end 17:39:09
