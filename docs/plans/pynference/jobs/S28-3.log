@@ -1,0 +1,215 @@
+== start 16:27:52
+== nvidia probe 16:27:52
+nvidia device files: (none)
+nvidia version: (none)
+nvidia kernel modules: 0
+== ENV OK: nessun segno NVIDIA su filesystem 16:27:52
+== regress gemma4 exit 0 (16:29:13) (atteso 0 = canaro + C10)
+chat-it: max |dp| 2.32e-06 over top-10
+chat-en: max |dp| 3.78e-07 over top-10
+code: max |dp| 3.12e-06 over top-10
+raw: max |dp| 3.30e-04 over top-10
+ppl: baseline 10064.7540, now 10064.7540, rel diff 0.000%
+PASS
+PASS
+== MODEL gemma4 16:29:13
+== bench gemma512 exit 0 (16:29:43) ctx=8192 pt=512 steps=32 (atteso 0)
+[r0] mem loaded:  torch_alloc=15.97G torch_res=16.05G
+[r1] mem loaded:  torch_alloc=15.97G torch_res=16.05G
+[r0] mem post-decode:  torch_alloc=16.21G torch_res=16.53G[r1] mem post-decode:  torch_alloc=16.21G torch_res=16.53G
+[graph] prefill 512 tokens: 1.097 ms/token (911 token/s)
+[graph] wall time per token: 34.4 ms (29.03 tok/s)
+awk: line 4: syntax error at or near *
+== bench gemma2k exit 0 (16:30:17) ctx=8192 pt=2000 steps=16 (atteso 0)
+[r1] mem loaded:  torch_alloc=15.97G torch_res=16.05G
+[r0] mem loaded:  torch_alloc=15.97G torch_res=16.05G
+[r1] mem post-decode:  torch_alloc=16.21G torch_res=16.66G[r0] mem post-decode:  torch_alloc=16.21G torch_res=16.66G
+[graph] prefill 2000 tokens: 1.127 ms/token (887 token/s)
+[graph] wall time per token: 34.7 ms (28.82 tok/s)
+awk: line 4: syntax error at or near *
+== bench gemma8k exit 0 (16:31:05) ctx=9728 pt=8192 steps=8 (atteso 0)
+[r1] mem loaded:  torch_alloc=16.04G torch_res=16.14G
+[r0] mem loaded:  torch_alloc=16.04G torch_res=16.14G
+[r0] mem post-decode:  torch_alloc=16.27G torch_res=20.70G[r1] mem post-decode:  torch_alloc=16.27G torch_res=20.70G
+[graph] prefill 8192 tokens: 1.190 ms/token (840 token/s)
+[graph] wall time per token: 36.2 ms (27.62 tok/s)
+== MODEL qwen35-27b 16:31:05
+awk: line 4: syntax error at or near *
+== bench qwen512 exit 0 (16:32:05) ctx=8192 pt=512 steps=32 (atteso 0)
+[r1] mem loaded: weights=13.31G cache=0.32G scratch=0.00G device_total=13.64G torch_alloc=13.76G torch_res=13.80G
+[r0] mem loaded: weights=13.31G cache=0.32G scratch=0.00G device_total=13.64G torch_alloc=13.76G torch_res=13.80G
+[r0] mem post-decode: weights=13.31G cache=0.32G scratch=0.00G device_total=13.64G torch_alloc=13.77G torch_res=14.36G[r1] mem post-decode: weights=13.31G cache=0.32G scratch=0.00G device_total=13.64G torch_alloc=13.77G torch_res=14.36G
+[graph] prefill 512 tokens: 2.439 ms/token (410 token/s)
+[graph] wall time per token: 30.2 ms (33.06 tok/s)
+awk: line 4: syntax error at or near *
+== bench qwen2k exit 0 (16:32:47) ctx=8192 pt=2000 steps=16 (atteso 0)
+[r1] mem loaded: weights=13.31G cache=0.32G scratch=0.00G device_total=13.64G torch_alloc=13.76G torch_res=13.80G
+[r0] mem loaded: weights=13.31G cache=0.32G scratch=0.00G device_total=13.64G torch_alloc=13.76G torch_res=13.80G
+[r0] mem post-decode: weights=13.31G cache=0.32G scratch=0.00G device_total=13.64G torch_alloc=13.77G torch_res=14.36G
+[r1] mem post-decode: weights=13.31G cache=0.32G scratch=0.00G device_total=13.64G torch_alloc=13.77G torch_res=14.36G
+[graph] prefill 2000 tokens: 2.476 ms/token (404 token/s)
+[graph] wall time per token: 30.4 ms (32.84 tok/s)
+awk: line 4: syntax error at or near *
+== bench qwen8k exit 0 (16:34:00) ctx=9728 pt=8192 steps=8 (atteso 0)
+[r1] mem loaded: weights=13.31G cache=0.37G scratch=0.00G device_total=13.68G torch_alloc=13.81G torch_res=13.82G
+[r0] mem loaded: weights=13.31G cache=0.37G scratch=0.00G device_total=13.68G torch_alloc=13.81G torch_res=13.82G
+[r1] mem post-decode: weights=13.31G cache=0.37G scratch=0.00G device_total=13.68G torch_alloc=13.82G torch_res=16.52G[r0] mem post-decode: weights=13.31G cache=0.37G scratch=0.00G device_total=13.68G torch_alloc=13.82G torch_res=16.52G
+[graph] prefill 8192 tokens: 2.522 ms/token (397 token/s)
+[graph] wall time per token: 31.4 ms (31.88 tok/s)
+awk: line 4: syntax error at or near *
+== MODEL gpt-oss-120b 16:34:00
+== bench gos512 exit 0 (16:35:15) ctx=8192 pt=512 steps=32 (atteso 0)
+  store: layer 35 gate: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 up: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 up: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 down: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 down: 39 resident + 2 swap slots -> 181 MB
+[r1] mem loaded: weights=1.25G experts=18.49G cache=0.14G scratch=1.00G pinned_host=0.00G device_total=20.88G torch_alloc=19.89G torch_res=19.90G
+[r0] mem loaded: weights=1.25G experts=18.49G cache=0.14G scratch=1.00G pinned_host=0.00G device_total=20.88G torch_alloc=19.89G torch_res=19.90G
+[r0] mem post-decode: weights=1.25G experts=18.49G cache=0.14G scratch=1.00G pinned_host=0.02G device_total=20.88G torch_alloc=21.59G torch_res=22.36G
+[r1] mem post-decode: weights=1.25G experts=18.49G cache=0.14G scratch=1.00G pinned_host=0.02G device_total=20.88G torch_alloc=21.59G torch_res=22.36G
+[graph] prefill 512 tokens: 3.247 ms/token (308 token/s)
+[graph] wall time per token: 171.3 ms (5.84 tok/s)
+store: hits 3253 misses 1356 copied 16.69 GiB; resident 1430/1502 slots
+awk: line 4: syntax error at or near *
+== bench gos2k exit 0 (16:35:54) ctx=8192 pt=2000 steps=16 (atteso 0)
+  store: layer 34 down: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 up: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 gate: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 down: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 up: 39 resident + 2 swap slots -> 181 MB
+[r0] mem loaded: weights=1.25G experts=18.49G cache=0.14G scratch=1.00G pinned_host=0.00G device_total=20.88G torch_alloc=19.89G torch_res=19.90G
+  store: layer 35 down: 39 resident + 2 swap slots -> 181 MB
+[r1] mem loaded: weights=1.25G experts=18.49G cache=0.14G scratch=1.00G pinned_host=0.00G device_total=20.88G torch_alloc=19.89G torch_res=19.90G
+[r0] mem post-decode: weights=1.25G experts=18.49G cache=0.14G scratch=1.00G pinned_host=0.02G device_total=20.88G torch_alloc=21.59G torch_res=23.16G[r1] mem post-decode: weights=1.25G experts=18.49G cache=0.14G scratch=1.00G pinned_host=0.02G device_total=20.88G torch_alloc=21.59G torch_res=23.16G
+[graph] prefill 2000 tokens: 2.747 ms/token (364 token/s)
+[graph] wall time per token: 97.8 ms (10.23 tok/s)
+store: hits 4954 misses 2808 copied 34.57 GiB; resident 1430/1502 slots
+awk: line 4: syntax error at or near *
+== bench gos8k exit 124 (16:55:57) ctx=9728 pt=8192 steps=8 (atteso 0)
+  store: layer 34 up: 39 resident + 2 swap slots -> 181 MB
+  store: layer 34 up: 39 resident + 2 swap slots -> 181 MB
+  store: layer 34 down: 39 resident + 2 swap slots -> 181 MB
+  store: layer 34 down: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 gate: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 gate: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 up: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 up: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 down: 39 resident + 2 swap slots -> 181 MB
+  store: layer 35 down: 39 resident + 2 swap slots -> 181 MB
+[r1] mem loaded: weights=1.25G experts=18.47G cache=0.17G scratch=1.00G pinned_host=0.00G device_total=20.88G torch_alloc=19.90G torch_res=19.92G
+[r0] mem loaded: weights=1.25G experts=18.47G cache=0.17G scratch=1.00G pinned_host=0.00G device_total=20.88G torch_alloc=19.90G torch_res=19.92G
+awk: line 4: syntax error at or near *
+== MODEL qwen4exp 16:55:57
+== bench q4e512 exit 0 (16:59:01) ctx=8192 pt=512 steps=32 (atteso 0)
+  store: layer 47 up: 151 resident + 2 swap slots -> 133 MB
+  store: layer 47 up: 151 resident + 2 swap slots -> 133 MB
+  store: layer 47 down: 151 resident + 2 swap slots -> 172 MB
+  store: layer 47 down: 151 resident + 2 swap slots -> 172 MB
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 68.36 GB)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 68.36 GB)
+[r1] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r0] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r0] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.67G torch_res=23.51G[r1] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.67G torch_res=23.51G
+[graph] prefill 512 tokens: 15.082 ms/token (66 token/s)
+[graph] wall time per token: 107.4 ms (9.31 tok/s)
+store: hits 12511 misses 7866 copied 18.19 GiB; resident 7278/7374 slots
+awk: line 4: syntax error at or near *
+== bench q4e2k exit 0 (17:02:17) ctx=8192 pt=2000 steps=16 (atteso 0)
+  store: layer 47 up: 151 resident + 2 swap slots -> 133 MB
+  store: layer 47 down: 151 resident + 2 swap slots -> 172 MB
+  store: layer 47 down: 151 resident + 2 swap slots -> 172 MB
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 68.36 GB)
+  store: host cache ON, 12.31 GB of non-resident experts pinned (allowance 68.36 GB)
+[r0] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r1] mem loaded: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=19.90G torch_res=19.92G
+[r0] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.67G torch_res=23.53G
+[r1] mem post-decode: weights=2.68G experts=16.87G cache=0.34G scratch=1.00G pinned_host=11.47G device_total=20.89G torch_alloc=21.67G torch_res=23.51G
+[graph] prefill 2000 tokens: 14.814 ms/token (68 token/s)
+[graph] wall time per token: 135.8 ms (7.36 tok/s)
+store: hits 25269 misses 18753 copied 43.57 GiB; resident 7278/7374 slots
+awk: line 4: syntax error at or near *
+== bench q4e8k exit 0 (17:08:01) ctx=9728 pt=8192 steps=8 (atteso 0)
+  store: layer 47 up: 151 resident + 2 swap slots -> 133 MB
+  store: layer 47 up: 151 resident + 2 swap slots -> 133 MB
+  store: layer 47 down: 151 resident + 2 swap slots -> 172 MB
+  store: layer 47 down: 151 resident + 2 swap slots -> 172 MB
+  store: host cache ON, 12.37 GB of non-resident experts pinned (allowance 68.36 GB)
+  store: host cache ON, 12.37 GB of non-resident experts pinned (allowance 68.36 GB)
+[r0] mem loaded: weights=2.68G experts=16.82G cache=0.39G scratch=1.00G pinned_host=11.52G device_total=20.89G torch_alloc=19.91G torch_res=19.95G
+[r1] mem loaded: weights=2.68G experts=16.82G cache=0.39G scratch=1.00G pinned_host=11.52G device_total=20.89G torch_alloc=19.91G torch_res=19.95G
+[r0] mem post-decode: weights=2.68G experts=16.82G cache=0.39G scratch=1.00G pinned_host=11.52G device_total=20.89G torch_alloc=21.66G torch_res=23.43G[r1] mem post-decode: weights=2.68G experts=16.82G cache=0.39G scratch=1.00G pinned_host=11.52G device_total=20.89G torch_alloc=21.66G torch_res=23.39G
+[graph] prefill 8192 tokens: 15.085 ms/token (66 token/s)
+[graph] wall time per token: 174.2 ms (5.74 tok/s)
+store: hits 93258 misses 70713 copied 165.23 GiB; resident 7254/7350 slots
+== SERVER gemma4 17:08:01
+awk: line 4: syntax error at or near *
+== server gemma health: {"status": "ok", "model": "gemma-4-31B-it-Q8_0"} (17:08:58)
+models: {"object": "list", "data": [{"id": "gemma-4-31B-it-Q8_0", "object": "model", "created": 1795363683, "owned_by": "pynference"}]}
+sync finish=length usage={'prompt_tokens': 22, 'completion_tokens': 24, 'total_tokens': 46} content="Ciao! Sono un'intelligenza artificiale addestrata da Google. Sono qui per aiutar"
+stream: righe data=6 done=1 curl_sync=0 curl_sse=0
+== arresto server gemma 17:08:59
+== server gemma exit 0 (17:09:06) clean=1
+[pynference] loaded in 37.2s + warm-up 15.0s
+[pynference] POST /v1/chat/completions -> 24 tok (prompt 22, finish length)
+[pynference] POST /v1/chat/completions -> 3 tok (prompt 16, finish stop, stream)
+[pynference] server stopped cleanly
+awk: line 4: syntax error at or near *
+== SERVER qwen35-27b 17:09:07
+== server qwen health: {"status": "ok", "model": "Qwen3.8-27B-Q8_0"} (17:10:04)
+models: {"object": "list", "data": [{"id": "Qwen3.8-27B-Q8_0", "object": "model", "created": 1795363749, "owned_by": "pynference"}]}
+sync finish=length usage={'prompt_tokens': 62, 'completion_tokens': 24, 'total_tokens': 86} content=''
+stream: righe data=19 done=1 curl_sync=0 curl_sse=0
+== arresto server qwen 17:10:07
+== server qwen exit 0 (17:10:08) clean=1
+[pynference] loaded in 35.9s + warm-up 16.6s
+[pynference] POST /v1/chat/completions -> 24 tok (prompt 62, finish length)
+[pynference] POST /v1/chat/completions -> 16 tok (prompt 55, finish length, stream)
+[pynference] server stopped cleanly
+awk: line 4: syntax error at or near *
+== SERVER gpt-oss-120b 17:10:10
+== server goss health: {"status": "ok", "model": "gpt-oss-120b-MXFP4"} (17:11:11)
+models: {"object": "list", "data": [{"id": "gpt-oss-120b-MXFP4", "object": "model", "created": 1795363812, "owned_by": "pynference"}]}
+sync finish=length usage={'prompt_tokens': 77, 'completion_tokens': 24, 'total_tokens': 101} content='!!!!!!!!!!!!!!!!!!!!!!!!'
+stream: righe data=4 done=1 curl_sync=0 curl_sse=0
+== arresto server goss 17:11:17
+== server goss exit 0 (17:11:18) clean=1
+[pynference] loaded in 42.0s + warm-up 13.1s
+[pynference] POST /v1/chat/completions -> 24 tok (prompt 77, finish length)
+[pynference] POST /v1/chat/completions -> 16 tok (prompt 70, finish length, stream)
+[pynference] server stopped cleanly
+== SERVER qwen4exp 17:11:20
+awk: line 4: syntax error at or near *
+== server q4e FAIL: /health non pronto 17:17:21
+  store: layer 43 down: 151 resident + 2 swap slots -> 141 MB
+  store: layer 44 gate: 151 resident + 2 swap slots -> 96 MB
+  store: layer 44 gate: 151 resident + 2 swap slots -> 96 MB
+  store: layer 44 up: 151 resident + 2 swap slots -> 96 MB
+  store: layer 44 up: 151 resident + 2 swap slots -> 96 MB
+  store: layer 44 down: 151 resident + 2 swap slots -> 141 MB
+  store: layer 44 down: 151 resident + 2 swap slots -> 141 MB
+  store: layer 45 gate: 151 resident + 2 swap slots -> 96 MB
+  store: layer 45 gate: 151 resident + 2 swap slots -> 96 MB
+  store: layer 45 up: 151 resident + 2 swap slots -> 96 MB
+  store: layer 45 up: 151 resident + 2 swap slots -> 96 MB
+  store: layer 45 down: 151 resident + 2 swap slots -> 172 MB
+  store: layer 45 down: 151 resident + 2 swap slots -> 172 MB
+  store: layer 46 gate: 151 resident + 2 swap slots -> 96 MB
+  store: layer 46 gate: 151 resident + 2 swap slots -> 96 MB
+  store: layer 46 up: 151 resident + 2 swap slots -> 96 MB
+  store: layer 46 up: 151 resident + 2 swap slots -> 96 MB
+  store: layer 46 down: 151 resident + 2 swap slots -> 172 MB
+  store: layer 46 down: 151 resident + 2 swap slots -> 172 MB
+  store: layer 47 gate: 151 resident + 2 swap slots -> 133 MB
+  store: layer 47 gate: 151 resident + 2 swap slots -> 133 MB
+  store: layer 47 up: 151 resident + 2 swap slots -> 133 MB
+  store: layer 47 up: 151 resident + 2 swap slots -> 133 MB
+  store: layer 47 down: 151 resident + 2 swap slots -> 172 MB
+  store: layer 47 down: 151 resident + 2 swap slots -> 172 MB
+== server fermato (FAIL-branche) 17:17:23
+awk: line 4: syntax error at or near *
+== gpu tests exit 0 (17:21:13) (atteso 0)
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+142 passed, 7 skipped, 1 warning in 227.39s (0:03:47)
+== summary: env=1 canary=1 gemma=0 gA=0 gB=0 gC=0 wA=0 wB=0 wC=0 oA=0 oB=0 oC=124 qA=0 qB=0 qC=0 srv_g=0 srv_w=0 srv_o=0 srv_q=1 gpu=0
+== end 17:21:13
